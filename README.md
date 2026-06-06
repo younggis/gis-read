@@ -1,5 +1,7 @@
 # gis-read
 
+[中文](./read.md) | English
+
 `gis-read` is a TypeScript GIS parser and converter available as both a CLI and a Node.js library. It normalizes supported GIS inputs into GeoJSON-style features, then writes common interchange formats such as GeoJSON, KML, GPX, and ESRI JSON.
 
 ## Features
