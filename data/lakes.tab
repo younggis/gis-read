@@ -1,0 +1,15 @@
+!table
+!version 300
+!charset Neutral
+
+Definition Table
+  Type NATIVE Charset "Neutral"
+  Fields 8
+    OBJECTID LargeInt ;
+    ID Float ;
+    Type Float ;
+    SubType Float ;
+    Name Char (254) ;
+    Comment Char (254) ;
+    SHAPE_Length Float ;
+    SHAPE_Area Float ;
