@@ -9,6 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { parseGeoJSON, writeGeoJSON } from '../src/parsers/geojson.js';
@@ -18,8 +19,11 @@ import { parseTAB } from '../src/parsers/tab.js';
 import { parseGPX, writeGPX } from '../src/parsers/gpx.js';
 import { parseTopoJSON } from '../src/parsers/topojson.js';
 import { parseCZML } from '../src/parsers/czml.js';
-import { parseCSV, parseWKT } from '../src/parsers/csv.js';
+import { parseCSV, parseWKT, writeCSV } from '../src/parsers/csv.js';
 import { parseEsriJSON, writeEsriJSON } from '../src/parsers/esrijson.js';
+import { parseMIF, writeMIF } from '../src/parsers/mif.js';
+import { writeShapefile } from '../src/parsers/shapefile-writer.js';
+import { writeTAB } from '../src/parsers/tab-writer.js';
 import { detectFormat } from '../src/format-detect.js';
 import {
   transformCoord,
@@ -43,6 +47,36 @@ const GEOJSON = path.join(DATA, 'lakes.geojson');
 const KML = path.join(DATA, 'lakes.kml');
 const SHP = path.join(DATA, 'lakes.shp');
 const TAB = path.join(DATA, 'lakes.tab');
+
+function tempDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'gis-read-parser-'));
+}
+
+function smallFeatureSet() {
+  return {
+    name: 'writer-fixture',
+    features: [
+      {
+        type: 'Feature' as const,
+        properties: { id: 1, name: 'point', active: true },
+        geometry: { type: 'Point', coordinates: [116.391, 39.907] },
+      },
+      {
+        type: 'Feature' as const,
+        properties: { id: 2, name: 'line', active: false },
+        geometry: { type: 'LineString', coordinates: [[116.391, 39.907], [116.4, 39.91]] },
+      },
+      {
+        type: 'Feature' as const,
+        properties: { id: 3, name: 'poly', active: true },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[[116.39, 39.9], [116.41, 39.9], [116.41, 39.92], [116.39, 39.9]]],
+        },
+      },
+    ],
+  };
+}
 
 test('detectFormat classifies sample files', () => {
   assert.equal(detectFormat(GEOJSON), 'geojson');
@@ -235,6 +269,19 @@ test('parseCSV falls back to lat/lng columns when no WKT', () => {
   assert.deepEqual((r.features[0].geometry as any).coordinates, [-74, 40]);
 });
 
+test('writeCSV emits WKT geometry column and can be parsed back', () => {
+  const text = writeCSV(smallFeatureSet(), { precision: 3 });
+  assert.match(text.split(/\r?\n/)[0], /wkt/);
+  assert.match(text, /POINT \(116\.391 39\.907\)/);
+  assert.match(text, /LINESTRING/);
+  assert.match(text, /POLYGON/);
+
+  const parsed = parseCSV(text);
+  assert.equal(parsed.features.length, 3);
+  assert.equal(parsed.features[0].properties.name, 'point');
+  assert.equal(parsed.features[2].geometry?.type, 'Polygon');
+});
+
 test('parseWKT supports all common geometry types', () => {
   assert.equal(parseWKT('POINT(1 2)')!.type, 'Point');
   assert.equal(parseWKT('LINESTRING(0 0, 1 1, 2 0)')!.type, 'LineString');
@@ -248,6 +295,117 @@ test('parseWKT supports all common geometry types', () => {
   assert.equal(ml.type, 'MultiLineString');
   const mpg = parseWKT('MULTIPOLYGON(((0 0, 1 0, 1 1, 0 0)), ((5 5, 6 5, 6 6, 5 5)))')!;
   assert.equal(mpg.type, 'MultiPolygon');
+});
+
+test('writeMIF emits MIF/MID files and can be parsed back', () => {
+  const dir = tempDir();
+  const out = path.join(dir, 'fixture.mif');
+
+  writeMIF(smallFeatureSet(), { outputPath: out, precision: 3 });
+
+  assert.ok(fs.existsSync(out));
+  assert.ok(fs.existsSync(path.join(dir, 'fixture.mid')));
+  const parsed = parseMIF(out);
+  assert.equal(parsed.features.length, 3);
+  assert.equal(parsed.features[0].geometry?.type, 'Point');
+  assert.equal(parsed.features[1].geometry?.type, 'LineString');
+  assert.equal(parsed.features[2].geometry?.type, 'Polygon');
+  assert.equal(parsed.features[0].properties.name, 'point');
+});
+
+test('writeMIF preserves sanitized field values and multi geometries', () => {
+  const dir = tempDir();
+  const out = path.join(dir, 'multi.mif');
+  const result = {
+    name: 'multi',
+    features: [
+      {
+        type: 'Feature' as const,
+        properties: { 'display name': 'multi-point' },
+        geometry: { type: 'MultiPoint', coordinates: [[1, 2], [3, 4]] },
+      },
+      {
+        type: 'Feature' as const,
+        properties: { 'display name': 'multi-line' },
+        geometry: { type: 'MultiLineString', coordinates: [[[1, 2], [3, 4]], [[5, 6], [7, 8]]] },
+      },
+    ],
+  };
+
+  writeMIF(result, { outputPath: out });
+
+  const parsed = parseMIF(out);
+  assert.equal(parsed.features.length, 2);
+  assert.equal(parsed.features[0].geometry?.type, 'MultiPoint');
+  assert.equal(parsed.features[1].geometry?.type, 'MultiLineString');
+  assert.equal(parsed.features[0].properties.display_name, 'multi-point');
+});
+
+test('writeShapefile emits readable shapefile bundle for one geometry type', () => {
+  const dir = tempDir();
+  const out = path.join(dir, 'points.shp');
+  const result = {
+    name: 'points',
+    features: [
+      {
+        type: 'Feature' as const,
+        properties: { id: 1, name: 'A' },
+        geometry: { type: 'Point', coordinates: [1, 2] },
+      },
+      {
+        type: 'Feature' as const,
+        properties: { id: 2, name: 'B' },
+        geometry: { type: 'Point', coordinates: [3, 4] },
+      },
+    ],
+  };
+
+  writeShapefile(result, { outputPath: out });
+
+  assert.ok(fs.existsSync(out));
+  assert.ok(fs.existsSync(path.join(dir, 'points.shx')));
+  assert.ok(fs.existsSync(path.join(dir, 'points.dbf')));
+  assert.ok(fs.existsSync(path.join(dir, 'points.cpg')));
+  const parsed = parseShapefile(out);
+  assert.equal(parsed.features.length, 2);
+  assert.equal(parsed.features[0].geometry?.type, 'Point');
+  assert.equal(parsed.features[0].properties.name, 'A');
+});
+
+test('writeShapefile preserves MultiPoint geometries', () => {
+  const dir = tempDir();
+  const out = path.join(dir, 'multipoints.shp');
+  const result = {
+    name: 'multipoints',
+    features: [
+      {
+        type: 'Feature' as const,
+        properties: { name: 'cluster' },
+        geometry: { type: 'MultiPoint', coordinates: [[1, 2], [3, 4], [5, 6]] },
+      },
+    ],
+  };
+
+  writeShapefile(result, { outputPath: out });
+
+  const parsed = parseShapefile(out);
+  assert.equal(parsed.features.length, 1);
+  assert.equal(parsed.features[0].geometry?.type, 'MultiPoint');
+  assert.deepEqual((parsed.features[0].geometry as any).coordinates, [[1, 2], [3, 4], [5, 6]]);
+});
+
+test('writeShapefile rejects incompatible mixed geometry bundles', () => {
+  assert.throws(
+    () => writeShapefile(smallFeatureSet(), { outputPath: path.join(tempDir(), 'mixed.shp') }),
+    /single geometry family/i,
+  );
+});
+
+test('writeTAB reports missing GDAL adapter clearly', () => {
+  assert.throws(
+    () => writeTAB(smallFeatureSet(), { outputPath: path.join(tempDir(), 'out.tab'), ogr2ogrPath: '__missing_ogr2ogr__' }),
+    /GDAL\/OGR.*ogr2ogr/i,
+  );
 });
 
 test('parseEsriJSON reads FeatureSet and decodes rings/paths', () => {

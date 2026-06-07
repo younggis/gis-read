@@ -19,7 +19,8 @@
  *   GEOMETRYCOLLECTION (POINT(...), LINESTRING(...), ...)
  */
 import * as fs from 'node:fs';
-import type { Feature, Geometry, ParseResult, Properties } from '../types.js';
+import type { Feature, Geometry, ParseResult, Properties, WriteOptions } from '../types.js';
+import { geometryToWKT } from './csv-wkt.js';
 
 const WKT_COLUMNS = ['wkt', 'WKT', 'geometry', 'geom', 'the_geom', 'shape', 'SHAPE'];
 const LAT_COLUMNS = ['lat', 'latitude', 'y', 'LAT', 'Latitude', 'Y'];
@@ -244,4 +245,37 @@ export function convertCSV(inputPath: string, outputPath?: string): ParseResult 
     fs.writeFileSync(outputPath, text, 'utf8');
   }
   return result;
+}
+
+export function writeCSV(result: ParseResult, opts: WriteOptions = {}): string {
+  const precision = opts.precision ?? 6;
+  const propKeys = new Set<string>();
+  for (const f of result.features) {
+    for (const key of Object.keys(f.properties ?? {})) propKeys.add(key);
+  }
+  const geometryColumn = propKeys.has('wkt') ? 'geometry' : 'wkt';
+  const headers = [...propKeys, geometryColumn];
+  const rows = [
+    headers.map(csvEscape).join(','),
+    ...result.features.map((f) => headers.map((h) => {
+      if (h === geometryColumn) return csvEscape(geometryToWKT(f.geometry, precision));
+      return csvEscape(formatCSVValue(f.properties?.[h]));
+    }).join(',')),
+  ];
+  const text = rows.join('\n') + '\n';
+  if (opts.outputPath) fs.writeFileSync(opts.outputPath, text, 'utf8');
+  return text;
+}
+
+function formatCSVValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function csvEscape(value: unknown): string {
+  const s = String(value ?? '');
+  if (!/[",\r\n]/.test(s)) return s;
+  return `"${s.replace(/"/g, '""')}"`;
 }

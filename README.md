@@ -2,12 +2,12 @@
 
 [中文](./read.md) | English
 
-`gis-read` is a TypeScript GIS parser and converter available as both a CLI and a Node.js library. It normalizes supported GIS inputs into GeoJSON-style features, then writes common interchange formats such as GeoJSON, KML, GPX, and ESRI JSON.
+`gis-read` is a TypeScript GIS parser and converter available as both a CLI and a Node.js library. It normalizes supported GIS inputs into GeoJSON-style features, then writes common interchange formats such as GeoJSON, KML, GPX, ESRI JSON, CSV/WKT, Shapefile, and MapInfo MIF.
 
 ## Features
 
 - Parse Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV/WKT, ESRI JSON, and MapInfo MIF.
-- Convert supported inputs to GeoJSON, KML, GPX, or ESRI JSON.
+- Convert supported inputs to GeoJSON, KML, GPX, ESRI JSON, CSV/WKT, Shapefile, or MapInfo MIF. MapInfo TAB writing is available when GDAL `ogr2ogr` is installed.
 - Stream large GeoJSON files to GeoJSON/KML/GPX without loading the whole file into memory.
 - Preserve common metadata such as CRS, bbox, attributes, and parser-specific details.
 - Transform coordinates between WGS84, WebMercator, CGCS2000, GCJ-02, BD-09, and supported `EPSG:xxxx` definitions.
@@ -57,6 +57,10 @@ gis convert input.shp -o output.geojson
 gis convert input.tab -o output.geojson
 gis convert input.geojson -o output.kml
 gis convert input.geojson -o output.esrijson -t esrijson
+gis convert input.geojson -o output.csv
+gis convert points.geojson -o points.shp -t shapefile
+gis convert input.geojson -o output.mif
+gis convert input.geojson -o output.tab -t tab # requires GDAL ogr2ogr
 
 # Stream large GeoJSON files
 gis stream big.geojson -o big.kml
@@ -79,16 +83,16 @@ node dist/cli.js --help
 
 | Format | Extensions | Read | Write | Notes |
 | --- | --- | --- | --- | --- |
-| Shapefile | `.shp` + sidecars | Yes | No | Reads `.dbf`, `.shx`, `.prj`, `.cpg` when available. |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | No | Attributes are reliable; some private `.map` geometry records may return `null`. |
+| Shapefile | `.shp` + sidecars | Yes | Yes | Writes `.shp/.shx/.dbf/.cpg`; one geometry family per bundle. |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes* | Write requires GDAL `ogr2ogr`; read attributes are reliable, some private `.map` records may return `null`. |
 | GeoJSON | `.geojson`, `.json` | Yes | Yes | Streaming input and output supported. |
 | KML | `.kml` | Yes | Yes | Supports Placemark, ExtendedData, Point, LineString, Polygon, MultiGeometry. |
 | GPX | `.gpx` | Yes | Yes | Waypoints and tracks/routes; polygon output is skipped. |
 | TopoJSON | `.topojson` | Yes | GeoJSON only | Expands shared arcs into coordinates. |
 | CZML | `.czml` | Yes | GeoJSON only | Converts entity packets to features. |
-| CSV/WKT | `.csv` | Yes | No | Reads WKT columns or latitude/longitude columns. |
+| CSV/WKT | `.csv` | Yes | Yes | Writes attributes plus a `wkt` geometry column. |
 | ESRI JSON | `.json` | Yes | Yes | Reads/writes ArcGIS-style geometry structures. |
-| MapInfo MIF | `.mif` + `.mid` | Yes | No | Reads Point, Line, Polyline, Region/Polygon. |
+| MapInfo MIF | `.mif` + `.mid` | Yes | Yes | Writes text `.mif` plus attribute `.mid`. |
 
 ## Library Usage
 
@@ -99,6 +103,10 @@ import {
   parseGeoJSON,
   writeGeoJSON,
   writeKML,
+  writeCSV,
+  writeMIF,
+  writeShapefile,
+  writeFile,
   transformFeatures,
 } from 'gis-read';
 
@@ -107,6 +115,10 @@ console.log(parsed.features.length);
 
 const geojson = writeGeoJSON(parsed, { precision: 6 });
 const kml = writeKML(parsed, { precision: 6 });
+const csv = writeCSV(parsed, { precision: 6 });
+writeMIF(parsed, { outputPath: 'output.mif', precision: 6 });
+writeShapefile(parseFile('points.geojson'), { outputPath: 'points.shp' });
+writeFile(parsed, 'output.csv', 'csv', { precision: 6 });
 
 const manual = parseShapefile('input.shp');
 transformFeatures(manual.features, 'WGS84', 'WebMercator');
@@ -202,9 +214,9 @@ test/
 
 ## Limitations
 
-- Shapefile writing is not supported.
-- MapInfo TAB writing is not supported.
-- CSV writing is not supported.
+- Shapefile output writes one geometry family per bundle; split mixed Point/Line/Polygon data before exporting.
+- MapInfo TAB output delegates to GDAL `ogr2ogr`; install GDAL or write MapInfo MIF when `ogr2ogr` is unavailable.
+- CSV output stores geometry as WKT in a single `wkt` column.
 - GPX cannot represent polygons; polygon and multipolygon output is skipped.
 - KML parsing focuses on static Placemark geometry and does not cover dynamic display features such as NetworkLink, Region, and LOD.
 - Some MapInfo TAB `.map` private record types may produce `geometry: null`; attributes are still returned.

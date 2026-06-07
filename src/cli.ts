@@ -27,6 +27,7 @@ import {
   writeKML,
   writeGPX,
   writeEsriJSON,
+  writeFile,
   parseGeoJSONStream,
   formatKMLPlacemarkLines,
   type Format,
@@ -183,15 +184,8 @@ program
     const result = parseFile(input, from as Format);
     reProject(result.features as any);
 
-    let text: string;
-    if (to === 'geojson') text = writeGeoJSON(result, { precision: opts.precision });
-    else if (to === 'kml') text = writeKML(result, { precision: opts.precision });
-    else if (to === 'gpx') text = writeGPX(result, { precision: opts.precision });
-    else if (to === 'esrijson') text = writeEsriJSON(result, { precision: opts.precision, pretty: true });
-    else throw new Error(`Writing to format "${to}" is not supported. Try: geojson, kml, gpx, esrijson`);
-
     fs.mkdirSync(path.dirname(path.resolve(opts.output)), { recursive: true });
-    fs.writeFileSync(opts.output, text, 'utf8');
+    writeFile(result, opts.output, to as Format, { precision: opts.precision });
     done(`Converted ${from} -> ${to}`, {
       features: result.features.length,
       input: input,
