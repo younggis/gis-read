@@ -3,7 +3,7 @@
  */
 import * as fs from 'node:fs';
 import type { Format } from '../format-detect.js';
-import type { ParseResult } from '../types.js';
+import type { ParseResult, WriteOptions } from '../types.js';
 import { detectFormat } from '../format-detect.js';
 import { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream } from './geojson.js';
 import { parseKML } from './kml.js';
@@ -15,6 +15,14 @@ import { parseCZML } from './czml.js';
 import { parseCSV } from './csv.js';
 import { parseEsriJSON } from './esrijson.js';
 import { parseMIF } from './mif.js';
+import { writeCSV } from './csv.js';
+import { writeEsriJSON } from './esrijson.js';
+import { writeGeoJSON } from './geojson.js';
+import { writeGPX } from './gpx.js';
+import { writeKML } from './kml.js';
+import { writeMIF } from './mif.js';
+import { writeShapefile } from './shapefile-writer.js';
+import { writeTAB } from './tab-writer.js';
 import { log, Logger } from '../logger.js';
 import { formatBytes } from '../io.js';
 
@@ -49,17 +57,52 @@ export function parseFile(filePath: string, format?: Format): ParseResult {
   }
 }
 
+export function writeFile(result: ParseResult, outputPath: string, format?: Format, opts: WriteOptions = {}): void {
+  const fmt = format ?? detectFormat(outputPath);
+  const writeOpts = { ...opts, outputPath };
+  switch (fmt) {
+    case 'geojson':
+      fs.writeFileSync(outputPath, writeGeoJSON(result, opts), 'utf8');
+      return;
+    case 'kml':
+      fs.writeFileSync(outputPath, writeKML(result, opts), 'utf8');
+      return;
+    case 'gpx':
+      fs.writeFileSync(outputPath, writeGPX(result, opts), 'utf8');
+      return;
+    case 'esrijson':
+      fs.writeFileSync(outputPath, writeEsriJSON(result, { ...opts, pretty: true }), 'utf8');
+      return;
+    case 'csv':
+      writeCSV(result, writeOpts);
+      return;
+    case 'mif':
+      writeMIF(result, writeOpts);
+      return;
+    case 'shapefile':
+      writeShapefile(result, writeOpts);
+      return;
+    case 'tab':
+      writeTAB(result, writeOpts);
+      return;
+    default:
+      throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, gpx, esrijson, csv, mif, shapefile, tab`);
+  }
+}
+
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';
 export { parseKML, writeKML, convertKML, formatKMLPlacemarkLines } from './kml.js';
 export { parseShapefile } from './shapefile.js';
+export { writeShapefile } from './shapefile-writer.js';
 export { parseTAB } from './tab.js';
+export { writeTAB } from './tab-writer.js';
 export { parseGPX, writeGPX, convertGPX } from './gpx.js';
 export { parseTopoJSON, convertTopoJSON } from './topojson.js';
 export { parseCZML, convertCZML } from './czml.js';
-export { parseCSV, parseWKT, convertCSV } from './csv.js';
+export { parseCSV, parseWKT, writeCSV, convertCSV } from './csv.js';
 export { parseEsriJSON, writeEsriJSON, convertEsriJSON } from './esrijson.js';
-export { parseMIF, convertMIF } from './mif.js';
+export { parseMIF, writeMIF, convertMIF } from './mif.js';
 export type { Format } from '../format-detect.js';
 export type { Feature, FeatureCollection, Geometry, Properties, ParseOptions, ParseResult, WriteOptions } from '../types.js';
 export { Logger, log } from '../logger.js';

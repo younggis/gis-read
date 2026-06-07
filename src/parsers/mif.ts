@@ -27,12 +27,13 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { Feature, Geometry, ParseResult, Properties } from '../types.js';
+import type { Feature, Geometry, ParseResult, Properties, WriteOptions } from '../types.js';
 
 interface MifColumn {
   name: string;
   type: string;
   width?: number;
+  sourceName?: string;
 }
 
 export function parseMIF(inputPath: string): ParseResult {
@@ -104,6 +105,10 @@ function parseMIFSections(text: string): { columns: MifColumn[]; sections: MifSe
       continue;
     }
     // Data section: read geometry block until blank line.
+    if (line === '') {
+      i++;
+      continue;
+    }
     const geomTokens = line.split(/\s+/);
     const geomType = geomTokens[0];
     let cur: MifSection = { geometry: null, raw: [] };
@@ -125,6 +130,45 @@ function parseMIFSections(text: string): { columns: MifColumn[]; sections: MifSe
           pts.push([x, y]);
         }
         cur.geometry = { type: 'LineString', coordinates: pts };
+        break;
+      }
+      case 'pline': {
+        if (geomTokens[1]?.toLowerCase() === 'multiple') {
+          const numLines = Number(geomTokens[2]);
+          const linesOut: number[][][] = [];
+          i++;
+          for (let lineIdx = 0; lineIdx < numLines && i < lines.length; lineIdx++) {
+            const numPts = Number(lines[i].trim());
+            i++;
+            const pts: number[][] = [];
+            for (let k = 0; k < numPts && i < lines.length; k++, i++) {
+              const [x, y] = lines[i].trim().split(/\s+/).map(Number);
+              pts.push([x, y]);
+            }
+            linesOut.push(pts);
+          }
+          cur.geometry = { type: 'MultiLineString', coordinates: linesOut };
+          break;
+        }
+        const numPts = Number(geomTokens[1]);
+        const pts: number[][] = [];
+        i++;
+        for (let k = 0; k < numPts && i < lines.length; k++, i++) {
+          const [x, y] = lines[i].trim().split(/\s+/).map(Number);
+          pts.push([x, y]);
+        }
+        cur.geometry = { type: 'LineString', coordinates: pts };
+        break;
+      }
+      case 'multipoint': {
+        const numPts = Number(geomTokens[1]);
+        const pts: number[][] = [];
+        i++;
+        for (let k = 0; k < numPts && i < lines.length; k++, i++) {
+          const [x, y] = lines[i].trim().split(/\s+/).map(Number);
+          pts.push([x, y]);
+        }
+        cur.geometry = { type: 'MultiPoint', coordinates: pts };
         break;
       }
       case 'region':
@@ -213,4 +257,132 @@ export function convertMIF(inputPath: string, outputPath?: string): ParseResult 
     fs.writeFileSync(outputPath, text, 'utf8');
   }
   return result;
+}
+
+export function writeMIF(result: ParseResult, opts: WriteOptions = {}): string {
+  const precision = opts.precision ?? 6;
+  const columns = inferMifColumns(result.features);
+  const delimiter = '\t';
+  const mifLines = [
+    'Version 300',
+    'Charset "UTF-8"',
+    'Delimiter "\\t"',
+    `Columns ${columns.length}`,
+    ...columns.map((c) => `  ${c.name} ${c.type}${c.width ? `(${c.width})` : ''}`),
+    'Data',
+  ];
+  const midLines: string[] = [];
+
+  for (const feature of result.features) {
+    mifLines.push(...formatMifGeometry(feature.geometry, precision), '');
+    midLines.push(columns.map((c) => formatMidValue(feature.properties?.[c.sourceName ?? c.name], c)).join(delimiter));
+  }
+
+  const mifText = mifLines.join('\n') + '\n';
+  const midText = midLines.join('\n') + '\n';
+  if (opts.outputPath) {
+    const base = stripExt(opts.outputPath);
+    fs.mkdirSync(path.dirname(path.resolve(base)), { recursive: true });
+    fs.writeFileSync(base + '.mif', mifText, 'utf8');
+    fs.writeFileSync(base + '.mid', midText, 'utf8');
+  }
+  return mifText;
+}
+
+function inferMifColumns(features: Feature[]): MifColumn[] {
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const feature of features) {
+    for (const key of Object.keys(feature.properties ?? {})) {
+      const safe = sanitizeMifName(key);
+      if (!seen.has(safe)) {
+        seen.add(safe);
+        keys.push(key);
+      }
+    }
+  }
+
+  return keys.map((sourceName) => {
+    const name = sanitizeMifName(sourceName);
+    const sourceValues = features.map((f) => f.properties?.[sourceName]).filter((v) => v !== null && v !== undefined);
+    if (sourceValues.length > 0 && sourceValues.every((v) => typeof v === 'boolean')) return { sourceName, name, type: 'Logical' };
+    if (sourceValues.length > 0 && sourceValues.every((v) => typeof v === 'number' && Number.isInteger(v))) return { sourceName, name, type: 'Integer' };
+    if (sourceValues.length > 0 && sourceValues.every((v) => typeof v === 'number')) return { sourceName, name, type: 'Float' };
+    const width = Math.min(254, Math.max(16, ...sourceValues.map((v) => formatPropertyValue(v).length)));
+    return { sourceName, name, type: 'Char', width };
+  });
+}
+
+function sanitizeMifName(name: string): string {
+  const safe = name.replace(/[^A-Za-z0-9_]/g, '_');
+  return /^[A-Za-z_]/.test(safe) ? safe : `F_${safe}`;
+}
+
+function formatMifGeometry(geometry: Geometry | null, precision: number): string[] {
+  if (!geometry) return ['None'];
+  switch (geometry.type) {
+    case 'Point': {
+      const c = geometry.coordinates as number[];
+      return [`Point ${fmt(c[0], precision)} ${fmt(c[1], precision)}`];
+    }
+    case 'MultiPoint': {
+      const points = geometry.coordinates as number[][];
+      if (points.length === 1) return [`Point ${fmt(points[0][0], precision)} ${fmt(points[0][1], precision)}`];
+      return [`MultiPoint ${points.length}`, ...points.map((c) => `  ${fmt(c[0], precision)} ${fmt(c[1], precision)}`)];
+    }
+    case 'LineString':
+      return formatMifLine(geometry.coordinates as number[][], precision);
+    case 'MultiLineString': {
+      const lines = geometry.coordinates as number[][][];
+      if (lines.length === 1) return formatMifLine(lines[0], precision);
+      return formatMifPolyline(lines, precision);
+    }
+    case 'Polygon':
+      return formatMifRegion([geometry.coordinates as number[][][]], precision);
+    case 'MultiPolygon':
+      return formatMifRegion(geometry.coordinates as number[][][][], precision);
+    default:
+      return ['None'];
+  }
+}
+
+function formatMifLine(coords: number[][], precision: number): string[] {
+  return [`Line ${coords.length}`, ...coords.map((c) => `  ${fmt(c[0], precision)} ${fmt(c[1], precision)}`)];
+}
+
+function formatMifPolyline(lines: number[][][], precision: number): string[] {
+  const out = [`Pline Multiple ${lines.length}`];
+  for (const line of lines) {
+    out.push(`  ${line.length}`);
+    for (const c of line) out.push(`  ${fmt(c[0], precision)} ${fmt(c[1], precision)}`);
+  }
+  return out;
+}
+
+function formatMifRegion(polygons: number[][][][], precision: number): string[] {
+  const rings = polygons.flat();
+  const out = [`Region ${rings.length}`];
+  for (const ring of rings) {
+    out.push(`  ${ring.length}`);
+    for (const c of ring) out.push(`    ${fmt(c[0], precision)} ${fmt(c[1], precision)}`);
+  }
+  return out;
+}
+
+function formatMidValue(value: unknown, column: MifColumn): string {
+  if (value === null || value === undefined) return '';
+  if (column.type.toLowerCase() === 'logical') return value ? 'T' : 'F';
+  if (typeof value === 'number') return String(value);
+  return `"${formatPropertyValue(value).replace(/"/g, '""')}"`;
+}
+
+function formatPropertyValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function fmt(value: number, precision: number): string {
+  return Number.isFinite(value) ? value.toFixed(precision) : '0';
 }

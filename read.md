@@ -2,12 +2,12 @@
 
 中文 | [English](./README.md)
 
-`gis-read` 是一个基于 TypeScript 的 GIS 数据解析与转换工具，同时提供命令行 CLI 和 Node.js 库 API。它会把不同 GIS 格式统一解析为 GeoJSON 风格的 Feature，再写出为 GeoJSON、KML、GPX、ESRI JSON 等常用交换格式。
+`gis-read` 是一个基于 TypeScript 的 GIS 数据解析与转换工具，同时提供命令行 CLI 和 Node.js 库 API。它会把不同 GIS 格式统一解析为 GeoJSON 风格的 Feature，再写出为 GeoJSON、KML、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF 等常用交换格式。
 
 ## 功能特性
 
 - 解析 Shapefile、MapInfo TAB、GeoJSON、KML、GPX、TopoJSON、CZML、CSV/WKT、ESRI JSON、MapInfo MIF。
-- 支持把输入格式转换为 GeoJSON、KML、GPX、ESRI JSON。
+- 支持把输入格式转换为 GeoJSON、KML、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF。MapInfo TAB 写出依赖本机安装 GDAL `ogr2ogr`。
 - 支持大 GeoJSON 流式转换到 GeoJSON/KML/GPX，避免一次性加载完整文件。
 - 保留常见元数据，例如 CRS、bbox、属性字段和格式相关 meta。
 - 支持 WGS84、WebMercator、CGCS2000、GCJ-02、BD-09，以及 `EPSG:xxxx` 坐标转换。
@@ -57,6 +57,10 @@ gis convert input.shp -o output.geojson
 gis convert input.tab -o output.geojson
 gis convert input.geojson -o output.kml
 gis convert input.geojson -o output.esrijson -t esrijson
+gis convert input.geojson -o output.csv
+gis convert points.geojson -o points.shp -t shapefile
+gis convert input.geojson -o output.mif
+gis convert input.geojson -o output.tab -t tab # 需要 GDAL ogr2ogr
 
 # 大 GeoJSON 流式转换
 gis stream big.geojson -o big.kml
@@ -79,16 +83,16 @@ node dist/cli.js --help
 
 | 格式 | 扩展名 | 读取 | 写出 | 说明 |
 | --- | --- | --- | --- | --- |
-| Shapefile | `.shp` + sidecars | 是 | 否 | 可读取 `.dbf`、`.shx`、`.prj`、`.cpg`。 |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 否 | 属性读取可靠；部分私有 `.map` 几何记录可能返回 `null`。 |
+| Shapefile | `.shp` + sidecars | 是 | 是 | 写出 `.shp/.shx/.dbf/.cpg`；每个 bundle 只能包含一种几何族。 |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是* | 写出需要 GDAL `ogr2ogr`；属性读取可靠，部分私有 `.map` 记录可能返回 `null`。 |
 | GeoJSON | `.geojson`, `.json` | 是 | 是 | 支持流式输入和输出。 |
 | KML | `.kml` | 是 | 是 | 支持 Placemark、ExtendedData、Point、LineString、Polygon、MultiGeometry。 |
 | GPX | `.gpx` | 是 | 是 | 支持 waypoint 和 track/route；Polygon 输出会被跳过。 |
 | TopoJSON | `.topojson` | 是 | 仅 GeoJSON | 展开共享 arcs 为普通坐标。 |
 | CZML | `.czml` | 是 | 仅 GeoJSON | 将 entity packet 转为 Feature。 |
-| CSV/WKT | `.csv` | 是 | 否 | 读取 WKT 列或经纬度列。 |
+| CSV/WKT | `.csv` | 是 | 是 | 写出属性列和 `wkt` 几何列。 |
 | ESRI JSON | `.json` | 是 | 是 | 读取/写出 ArcGIS 风格几何结构。 |
-| MapInfo MIF | `.mif` + `.mid` | 是 | 否 | 支持 Point、Line、Polyline、Region/Polygon。 |
+| MapInfo MIF | `.mif` + `.mid` | 是 | 是 | 写出文本 `.mif` 和属性 `.mid`。 |
 
 ## Node.js 库用法
 
@@ -99,6 +103,10 @@ import {
   parseGeoJSON,
   writeGeoJSON,
   writeKML,
+  writeCSV,
+  writeMIF,
+  writeShapefile,
+  writeFile,
   transformFeatures,
 } from 'gis-read';
 
@@ -107,6 +115,10 @@ console.log(parsed.features.length);
 
 const geojson = writeGeoJSON(parsed, { precision: 6 });
 const kml = writeKML(parsed, { precision: 6 });
+const csv = writeCSV(parsed, { precision: 6 });
+writeMIF(parsed, { outputPath: 'output.mif', precision: 6 });
+writeShapefile(parseFile('points.geojson'), { outputPath: 'points.shp' });
+writeFile(parsed, 'output.csv', 'csv', { precision: 6 });
 
 const manual = parseShapefile('input.shp');
 transformFeatures(manual.features, 'WGS84', 'WebMercator');
@@ -202,9 +214,9 @@ test/
 
 ## 已知限制
 
-- 暂不支持写出 Shapefile。
-- 暂不支持写出 MapInfo TAB。
-- 暂不支持写出 CSV。
+- Shapefile 写出要求同一个 bundle 只包含一种几何族；混合 Point/Line/Polygon 数据需要先拆分。
+- MapInfo TAB 写出委托给 GDAL `ogr2ogr`；未安装 GDAL 时请改写 MapInfo MIF。
+- CSV 写出会把几何保存为单个 `wkt` 列。
 - GPX 不能表达面几何，Polygon / MultiPolygon 输出会被跳过。
 - KML 解析聚焦静态 Placemark 几何，不覆盖 NetworkLink、Region、LOD 等动态显示特性。
 - 部分 MapInfo TAB `.map` 私有 record 类型可能返回 `geometry: null`，但属性仍会返回。
