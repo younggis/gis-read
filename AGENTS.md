@@ -21,6 +21,10 @@ Use ES modules and explicit `.js` extensions in local imports, matching the exis
 
 Tests use `node:test` and `node:assert/strict`. Add tests under `test/` with the `*.test.ts` suffix. Parser tests should cover format detection, feature counts, representative geometry types, metadata/CRS handling, and round-trip writers when available. Reuse `data/` fixtures when possible; if new fixtures are large, document why they are needed.
 
+## Change Synchronization
+
+When adding, changing, or removing functionality, update all affected project surfaces in the same change. This includes automated tests under `test/`, the Chinese operation manual `操作手册.md`, the English README `README.md`, and the Chinese README `read.md`. For CLI behavior changes, document the new or changed command examples in both README files and the operation manual. For parser, writer, CRS, encoding, or streaming changes, add or adjust tests that prove the behavior and update the relevant support matrix, limitations, or troubleshooting notes. Do not leave documentation saying an old behavior still exists after the code has changed.
+
 ## Commit & Pull Request Guidelines
 
 No repository-specific git history is available in this checkout. Use concise, imperative commit subjects such as `Add GPX parser tests` or `Fix KML coordinate parsing`. Pull requests should describe the changed formats or CLI behavior, list validation commands run (`npm test`, `npm run lint`, `npm run build`), and include sample CLI input/output when user-visible behavior changes.
