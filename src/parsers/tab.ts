@@ -65,7 +65,7 @@ export function parseTAB(inputPath: string): ParseResult {
     if (!fs.existsSync(p)) throw new Error(`TAB bundle missing: ${p}`);
   }
 
-  const tabText = fs.readFileSync(tabPath, 'utf8');
+  const tabText = readTabText(tabPath);
   const header = parseTabHeader(tabText);
   const dat = readDat(datPath, header, cpgPath);
   const id = readId(idPath);
@@ -99,6 +99,35 @@ function stripExt(p: string): string {
 
 // --- .tab text header parser --------------------------------------------
 
+function readTabText(tabPath: string): string {
+  const buf = fs.readFileSync(tabPath);
+  const asciiHead = buf.toString('latin1', 0, Math.min(buf.length, 512));
+  const charset = asciiHead.match(/!charset\s+(\S+)/i)?.[1] ?? asciiHead.match(/Charset\s+"([^"]+)"/i)?.[1];
+  const enc = charset ? mapTabCharset(charset) : null;
+  return decoderFor(enc ?? detectEncoding(buf))(buf);
+}
+
+function mapTabCharset(charset: string): string | null {
+  const cs = charset.toLowerCase().replace(/^["']|["']$/g, '').replace(/[^a-z0-9-]/g, '');
+  const table: Record<string, string> = {
+    neutral: 'latin1',
+    windowslatin1: 'windows-1252',
+    windows1252: 'windows-1252',
+    utf8: 'utf-8',
+    'utf-8': 'utf-8',
+    windowssimpchinese: 'gb18030',
+    windowssimplifiedchinese: 'gb18030',
+    windows936: 'gbk',
+    cp936: 'gbk',
+    gbk: 'gbk',
+    gb2312: 'gb18030',
+    gb18030: 'gb18030',
+    big5: 'big5',
+    windowsbig5: 'big5',
+  };
+  return table[cs] ?? null;
+}
+
 function parseTabHeader(text: string): TabHeader {
   const lines = text.split(/\r?\n/);
   let charset = 'Neutral';
@@ -127,7 +156,7 @@ function parseTabHeader(text: string): TabHeader {
     const startScan = defIdx + 1;
     for (let i = startScan; i < lines.length && fields.length < fieldCount; i++) {
       const line = lines[i];
-      const fm = line.match(/^\s*(\w+)\s+(\S+)(?:\s*\(\s*(\d+)\s*\))?\s*;/i);
+      const fm = line.match(/^\s*(.+?)\s+(\S+)(?:\s*\(\s*(\d+)\s*\))?\s*;/i);
       if (fm) {
         const name = fm[1];
         const typ = fm[2];
@@ -190,20 +219,9 @@ function readDat(datPath: string, header: TabHeader, cpgPath?: string): { record
   let source: 'cpg' | 'tab-charset' | 'detected' | 'driver' = 'cpg';
   if (!encoding) {
     // Try .tab's !charset line.
-    const csMap: Record<string, string> = {
-      neutral: 'latin1',
-      'windowslatin1': 'windows-1252',
-      'windows-1252': 'windows-1252',
-      'utf-8': 'utf-8',
-      'utf8': 'utf-8',
-      'windows-936': 'gbk',
-      'gbk': 'gbk',
-      'gb18030': 'gb18030',
-      'big5': 'big5',
-    };
-    const cs = (header.charset || '').toLowerCase().replace(/[^a-z0-9-]/g, '');
-    if (csMap[cs]) {
-      encoding = csMap[cs];
+    const tabCharsetEncoding = mapTabCharset(header.charset || '');
+    if (tabCharsetEncoding) {
+      encoding = tabCharsetEncoding;
       source = 'tab-charset';
     }
   }
@@ -358,13 +376,21 @@ function readMapGeometry(mapPath: string, idPath: string): MapReader {
       continue;
     }
     const objType = buf.readInt32LE(off);
-    const geom = parseMapObject(objType, buf, off);
+    const geom = parseMapObject(objType, buf, off, nextMapOffset(id.offsets, off, buf.length));
     geometries.set(off, geom);
   }
   return { geometries };
 }
 
-function parseMapObject(type: number, buf: Buffer, off: number): Geometry | null {
+function nextMapOffset(offsets: number[], off: number, fallback: number): number {
+  let next = fallback;
+  for (const candidate of offsets) {
+    if (candidate > off && candidate < next) next = candidate;
+  }
+  return next;
+}
+
+function parseMapObject(type: number, buf: Buffer, off: number, end = buf.length): Geometry | null {
   // Layout for a Region (type 4): after the type code, the format is:
   //   4 bytes: type (already read)
   //   For region, the structure is more elaborate. We walk it carefully.
@@ -388,10 +414,57 @@ function parseMapObject(type: number, buf: Buffer, off: number): Geometry | null
       // Multiple points.
       return parseMultiPoint(buf, off);
     }
+    const legacyType = type & 0xff;
+    if (legacyType === 0x08 || legacyType === 0x26) {
+      return parseLegacyLineObject(buf, off, end);
+    }
     return null;
   } catch {
     return null;
   }
+}
+
+function parseLegacyLineObject(buf: Buffer, off: number, end: number): Geometry | null {
+  const lines: number[][][] = [];
+  let p = off;
+  const max = Math.min(end, buf.length, off + 8192);
+
+  while (p + 38 <= max) {
+    const legacyType = buf[p];
+    if (legacyType !== 0x08 && legacyType !== 0x26) break;
+
+    const length = legacyType === 0x08 ? 38 : 40;
+    const coordStart = legacyType === 0x08 ? p + 13 : p + 15;
+    if (p + length > max) break;
+
+    const line = readLegacyScaledLine(buf, coordStart);
+    if (!line) break;
+    lines.push(line);
+    p += length;
+  }
+
+  if (lines.length === 0) return null;
+  if (lines.length === 1) return { type: 'LineString', coordinates: lines[0] };
+  return { type: 'MultiLineString', coordinates: lines };
+}
+
+function readLegacyScaledLine(buf: Buffer, p: number): number[][] | null {
+  const coords: number[][] = [];
+  for (let i = 0; i < 3; i++) {
+    const xOffset = p + i * 8;
+    const yOffset = xOffset + 4;
+    if (yOffset + 4 > buf.length) return null;
+
+    const x = -buf.readInt32LE(xOffset) / 1_000_000;
+    const y = buf.readInt32LE(yOffset) / 1_000_000;
+    if (!isPlausibleLonLat(x, y)) return null;
+    coords.push([x, y]);
+  }
+  return coords.length >= 2 ? coords : null;
+}
+
+function isPlausibleLonLat(x: number, y: number): boolean {
+  return Number.isFinite(x) && Number.isFinite(y) && x >= -180 && x <= 180 && y >= -90 && y <= 90;
 }
 
 function parseLineOrPolyline(buf: Buffer, off: number): Geometry {

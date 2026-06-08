@@ -12,6 +12,7 @@
 - Preserve common metadata such as CRS, bbox, attributes, and parser-specific details.
 - Transform coordinates between WGS84, WebMercator, CGCS2000, GCJ-02, BD-09, and supported `EPSG:xxxx` definitions.
 - Detect common Chinese GIS text encodings from `.cpg`, TAB headers, dBASE language drivers, and content heuristics.
+- Decode MapInfo TAB `WindowsSimpChinese` field names and attribute values, and common legacy line records into GeoJSON line geometries.
 
 ## Requirements
 
@@ -84,7 +85,7 @@ node dist/cli.js --help
 | Format | Extensions | Read | Write | Notes |
 | --- | --- | --- | --- | --- |
 | Shapefile | `.shp` + sidecars | Yes | Yes | Writes `.shp/.shx/.dbf/.cpg`; one geometry family per bundle. |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes* | Write requires GDAL `ogr2ogr`; read attributes are reliable, some private `.map` records may return `null`. |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes* | Write requires GDAL `ogr2ogr`; reads TAB charsets, Chinese attributes, and common legacy line records; unsupported private `.map` records may return `null`. |
 | GeoJSON | `.geojson`, `.json` | Yes | Yes | Streaming input and output supported. |
 | KML | `.kml` | Yes | Yes | Supports Placemark, ExtendedData, Point, LineString, Polygon, MultiGeometry. |
 | GPX | `.gpx` | Yes | Yes | Waypoints and tracks/routes; polygon output is skipped. |
@@ -219,7 +220,7 @@ test/
 - CSV output stores geometry as WKT in a single `wkt` column.
 - GPX cannot represent polygons; polygon and multipolygon output is skipped.
 - KML parsing focuses on static Placemark geometry and does not cover dynamic display features such as NetworkLink, Region, and LOD.
-- Some MapInfo TAB `.map` private record types may produce `geometry: null`; attributes are still returned.
+- Some MapInfo TAB `.map` private record types may produce `geometry: null`; attributes are still returned. Common legacy line records with scaled lon/lat coordinates are decoded as `LineString` or `MultiLineString`.
 
 ## Contributing
 

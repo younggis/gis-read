@@ -12,6 +12,7 @@
 - 保留常见元数据，例如 CRS、bbox、属性字段和格式相关 meta。
 - 支持 WGS84、WebMercator、CGCS2000、GCJ-02、BD-09，以及 `EPSG:xxxx` 坐标转换。
 - 自动识别常见中文 GIS 字段编码，包括 `.cpg`、TAB 头、dBASE language driver 和内容启发式探测。
+- 支持 MapInfo TAB `WindowsSimpChinese` 字段名和属性值解码，并可读取常见 legacy 线对象几何。
 
 ## 环境要求
 
@@ -84,7 +85,7 @@ node dist/cli.js --help
 | 格式 | 扩展名 | 读取 | 写出 | 说明 |
 | --- | --- | --- | --- | --- |
 | Shapefile | `.shp` + sidecars | 是 | 是 | 写出 `.shp/.shx/.dbf/.cpg`；每个 bundle 只能包含一种几何族。 |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是* | 写出需要 GDAL `ogr2ogr`；属性读取可靠，部分私有 `.map` 记录可能返回 `null`。 |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是* | 写出需要 GDAL `ogr2ogr`；支持 TAB 字符集、中文属性值和常见 legacy 线对象读取，部分私有 `.map` 记录仍可能返回 `null`。 |
 | GeoJSON | `.geojson`, `.json` | 是 | 是 | 支持流式输入和输出。 |
 | KML | `.kml` | 是 | 是 | 支持 Placemark、ExtendedData、Point、LineString、Polygon、MultiGeometry。 |
 | GPX | `.gpx` | 是 | 是 | 支持 waypoint 和 track/route；Polygon 输出会被跳过。 |
@@ -219,7 +220,7 @@ test/
 - CSV 写出会把几何保存为单个 `wkt` 列。
 - GPX 不能表达面几何，Polygon / MultiPolygon 输出会被跳过。
 - KML 解析聚焦静态 Placemark 几何，不覆盖 NetworkLink、Region、LOD 等动态显示特性。
-- 部分 MapInfo TAB `.map` 私有 record 类型可能返回 `geometry: null`，但属性仍会返回。
+- 部分 MapInfo TAB `.map` 私有 record 类型可能返回 `geometry: null`，但属性仍会返回；常见 legacy 线对象会解析为 `LineString` 或 `MultiLineString`。
 
 ## 贡献
 

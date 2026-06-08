@@ -79,6 +79,12 @@ function writeFixture(dir: string, name: string): string {
   return file;
 }
 
+function findDataFile(name: string): string {
+  const file = fs.readdirSync('data').find((entry) => entry === name);
+  assert.ok(file, `missing fixture: ${name}`);
+  return path.join('data', file);
+}
+
 test('stream command writes non-empty KML with one Placemark per GeoJSON feature', async () => {
   const dir = tempDir();
   const input = writeFixture(dir, 'input.geojson');
@@ -132,6 +138,35 @@ test('convert command handles common input formats to GeoJSON', async () => {
     const parsed = parseGeoJSON(fs.readFileSync(output));
     assert.equal(parsed.features.length, expectedFeatures, `${input} should convert to GeoJSON`);
   }
+});
+
+test('convert command preserves Chinese TAB field names and subway line geometries', async () => {
+  const dir = tempDir();
+  const output = path.join(dir, 'subway.geojson');
+
+  await runCli(['convert', findDataFile('地铁线路图层.TAB'), '-o', output, '-t', 'geojson', '--log-level', 'silent']);
+
+  const parsed = parseGeoJSON(fs.readFileSync(output));
+  assert.equal(parsed.features.length, 22);
+  assert.equal(parsed.features[0].properties['地铁线路'], '5号线');
+  const geometries = parsed.features.map((f) => f.geometry).filter(Boolean);
+  assert.ok(geometries.length > 0, 'converted subway TAB should include line geometries');
+  assert.ok(geometries.every((g) => g?.type === 'LineString' || g?.type === 'MultiLineString'));
+});
+
+test('convert command decodes Chinese TAB attribute values in segmented subway lines', async () => {
+  const dir = tempDir();
+  const output = path.join(dir, 'segmented-subway.geojson');
+
+  await runCli(['convert', findDataFile('地铁分段线路正反向.TAB'), '-o', output, '-t', 'geojson', '--log-level', 'silent']);
+
+  const parsed = parseGeoJSON(fs.readFileSync(output));
+  assert.equal(parsed.features.length, 819);
+  assert.equal(parsed.features[0].properties['地市'], '成都');
+  assert.equal(parsed.features[0].properties['线路'], '9号线');
+  assert.equal(parsed.features[0].properties['编号'], 'D9-黄田坝-成都西站');
+  const geometries = parsed.features.map((f) => f.geometry).filter(Boolean);
+  assert.ok(geometries.length > 0, 'converted segmented subway TAB should include line geometries');
 });
 
 test('convert command writes CSV, MIF, and Shapefile outputs from compatible GeoJSON input', async () => {
