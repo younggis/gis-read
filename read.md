@@ -1,6 +1,6 @@
 # gis-read
 
-当前版本：`1.0.2`
+当前版本：`1.0.3`
 
 中文 | [English](./README.md)
 
@@ -11,6 +11,7 @@
 - 解析 Shapefile、MapInfo TAB、GeoJSON、KML、GPX、TopoJSON、CZML、CSV/WKT、ESRI JSON、MapInfo MIF。
 - 支持把输入格式转换为 GeoJSON、KML、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF。MapInfo TAB 写出依赖本机安装 GDAL `ogr2ogr`。
 - 支持大 GeoJSON 流式转换到 GeoJSON/KML/GPX，避免一次性加载完整文件。
+- Shapefile 的 DBF 属性表按记录读取，支持超过 2 GiB 的 DBF 文件，并会按 `.cpg` 解码 UTF-8 中文字段名。
 - 保留常见元数据，例如 CRS、bbox、属性字段和格式相关 meta。
 - 支持 WGS84、WebMercator、CGCS2000、GCJ-02、BD-09，以及 `EPSG:xxxx` 坐标转换。
 - 自动识别常见中文 GIS 字段编码，包括 `.cpg`、TAB 头、合法 UTF-8 DBF 字节、dBASE language driver 和内容启发式探测。
@@ -33,7 +34,7 @@ gis --help
 从本地 tarball 安装：
 
 ```bash
-npm install -g ./gis-read-0.1.0.tgz
+npm install -g ./gis-read-1.0.3.tgz
 gis --help
 ```
 
@@ -86,7 +87,7 @@ node dist/cli.js --help
 
 | 格式 | 扩展名 | 读取 | 写出 | 说明 |
 | --- | --- | --- | --- | --- |
-| Shapefile | `.shp` + sidecars | 是 | 是 | 写出 `.shp/.shx/.dbf/.cpg`；每个 bundle 只能包含一种几何族。 |
+| Shapefile | `.shp` + sidecars | 是 | 是 | DBF 属性不再一次性读入单个 Buffer，支持 `.cpg` 中声明的 UTF-8 中文字段名；写出 `.shp/.shx/.dbf/.cpg`，每个 bundle 只能包含一种几何族。 |
 | MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是* | 写出需要 GDAL `ogr2ogr`；支持 TAB 字符集、中文属性值、常见 legacy 线对象、点表线对象和 `0x0D` 面对象读取，部分私有 `.map` 记录仍可能返回 `null`。 |
 | GeoJSON | `.geojson`, `.json` | 是 | 是 | 支持流式输入和输出。 |
 | KML | `.kml` | 是 | 是 | 支持 Placemark、ExtendedData、Point、LineString、Polygon、MultiGeometry。 |
@@ -137,6 +138,8 @@ for await (const feature of parseGeoJSONStream('big.geojson')) {
 }
 ```
 
+读取超大 Shapefile 时，可以用 `parseShapefile('input.shp', { limit: 10 })` 只读取前几条 SHP/DBF 记录，先确认字段、编码和几何是否正常，再做完整转换。
+
 主要返回结构：
 
 ```ts
@@ -179,6 +182,7 @@ npm 包只包含运行时所需文件：
 
 - `dist/`
 - `README.md`
+- `read.md`
 - `操作手册.md`
 - `LICENSE`
 
@@ -218,6 +222,7 @@ test/
 ## 已知限制
 
 - Shapefile 写出要求同一个 bundle 只包含一种几何族；混合 Point/Line/Polygon 数据需要先拆分。
+- Shapefile DBF 读取已绕开 Node 单个 Buffer 的 2 GiB 限制，但普通 `parse` 和 `convert` 仍会把返回的 features 放入内存。处理超大数据前建议先用 `gis parse input.shp --limit 10` 检查。
 - MapInfo TAB 写出委托给 GDAL `ogr2ogr`；未安装 GDAL 时请改写 MapInfo MIF。
 - CSV 写出会把几何保存为单个 `wkt` 列。
 - GPX 不能表达面几何，Polygon / MultiPolygon 输出会被跳过。

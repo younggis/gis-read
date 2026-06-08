@@ -41,6 +41,7 @@ import {
   decodeStringField,
   driverToEncoding,
 } from '../src/encoding.js';
+import type { Feature } from '../src/types.js';
 
 const DATA = path.resolve('data');
 const GEOJSON = path.join(DATA, 'lakes.geojson');
@@ -145,6 +146,53 @@ function smallFeatureSet() {
   };
 }
 
+function writeUtf8ChineseFieldNameShapefile(dir: string): string {
+  const shp = path.join(dir, 'utf8-field.shp');
+  const feature: Feature = {
+    type: 'Feature',
+    properties: { '建筑物P': 'CD-317139-1', NAME: '青城1号1栋' },
+    geometry: { type: 'Point', coordinates: [105.3876082, 30.87093462] },
+  };
+  writeShapefile({ name: 'utf8-field', features: [feature] }, { outputPath: shp });
+  const dbf = shp.replace(/\.shp$/i, '.dbf');
+  const fd = fs.openSync(dbf, 'r+');
+  try {
+    const rawName = Buffer.from('建筑物编码', 'utf8').subarray(0, 11);
+    const fieldName = Buffer.alloc(11, 0);
+    rawName.copy(fieldName);
+    fs.writeSync(fd, fieldName, 0, fieldName.length, 32);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return shp;
+}
+
+function copyBundleToSparseLargeDbf(srcShp: string, dir: string): string {
+  const srcBase = srcShp.replace(/\.(shp|shx|dbf|prj|cpg)$/i, '');
+  const dstBase = path.join(dir, 'large-dbf');
+  for (const ext of ['.shp', '.shx', '.cpg']) {
+    fs.copyFileSync(srcBase + ext, dstBase + ext);
+  }
+
+  const srcDbf = srcBase + '.dbf';
+  const dstDbf = dstBase + '.dbf';
+  fs.copyFileSync(srcDbf, dstDbf);
+  const header = fs.readFileSync(dstDbf).subarray(0, 32);
+  const headerLen = header.readUInt16LE(8);
+  const recordLen = header.readUInt16LE(10);
+  const logicalSize = 2 * 1024 * 1024 * 1024 + recordLen;
+  const fd = fs.openSync(dstDbf, 'r+');
+  try {
+    const record = Buffer.alloc(recordLen, 0x20);
+    fs.readSync(fd, record, 0, recordLen, headerLen);
+    fs.writeSync(fd, record, 0, recordLen, logicalSize - recordLen);
+    fs.ftruncateSync(fd, logicalSize);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return dstBase + '.shp';
+}
+
 test('detectFormat classifies sample files', () => {
   assert.equal(detectFormat(GEOJSON), 'geojson');
   assert.equal(detectFormat(KML), 'kml');
@@ -207,6 +255,27 @@ test('parseShapefile detects UTF-8 attributes when .cpg is missing', () => {
   assert.equal(r.features[0].properties.name, '扎科乡');
   assert.equal(r.features[0].properties.quhua, '513328205');
   assert.equal(r.features[0].geometry?.type, 'Polygon');
+});
+
+test('parseShapefile decodes UTF-8 DBF field names from .cpg', () => {
+  const r = parseShapefile(writeUtf8ChineseFieldNameShapefile(tempDir()));
+  assert.equal(r.features.length, 1);
+  assert.match(String(r.meta?.encoding), /utf-8 \(cpg\)/i);
+  assert.equal(r.features[0].properties['建筑物'], 'CD-317139-1');
+  assert.equal(r.features[0].properties.NAME, '青城1号1栋');
+});
+
+test('parseShapefile supports limiting parsed features', () => {
+  const r = parseShapefile(SHP, { limit: 2 });
+  assert.equal(r.features.length, 2);
+  assert.equal(r.meta?.recordCount, 2);
+});
+
+test('parseShapefile streams DBF records larger than Node Buffer limit', () => {
+  const largeShp = copyBundleToSparseLargeDbf(writeUtf8ChineseFieldNameShapefile(tempDir()), tempDir());
+  const r = parseShapefile(largeShp);
+  assert.equal(r.features.length, 1);
+  assert.equal(r.features[0].properties['建筑物'], 'CD-317139-1');
 });
 
 test('parseTAB reads .tab + .dat attributes (geometry best-effort)', () => {

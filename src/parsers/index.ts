@@ -3,7 +3,7 @@
  */
 import * as fs from 'node:fs';
 import type { Format } from '../format-detect.js';
-import type { ParseResult, WriteOptions } from '../types.js';
+import type { ParseOptions, ParseResult, WriteOptions } from '../types.js';
 import { detectFormat } from '../format-detect.js';
 import { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream } from './geojson.js';
 import { parseKML } from './kml.js';
@@ -26,7 +26,7 @@ import { writeTAB } from './tab-writer.js';
 import { log, Logger } from '../logger.js';
 import { formatBytes } from '../io.js';
 
-export function parseFile(filePath: string, format?: Format): ParseResult {
+export function parseFile(filePath: string, format?: Format, opts: ParseOptions = {}): ParseResult {
   const fmt = format ?? detectFormat(filePath);
   const stat = fs.statSync(filePath);
   log.debug(`parseFile: ${filePath} (${formatBytes(stat.size)}) as ${fmt}`);
@@ -37,7 +37,7 @@ export function parseFile(filePath: string, format?: Format): ParseResult {
     case 'kml':
       return parseKML(fs.readFileSync(filePath));
     case 'shapefile':
-      return parseShapefile(filePath);
+      return parseShapefile(filePath, opts);
     case 'tab':
       return parseTAB(filePath);
     case 'gpx':
