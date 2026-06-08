@@ -48,6 +48,12 @@ const KML = path.join(DATA, 'lakes.kml');
 const SHP = path.join(DATA, 'lakes.shp');
 const TAB = path.join(DATA, 'lakes.tab');
 
+function findDataFile(name: string): string {
+  const file = fs.readdirSync(DATA).find((entry) => entry === name);
+  assert.ok(file, `missing fixture: ${name}`);
+  return path.join(DATA, file);
+}
+
 function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'gis-read-parser-'));
 }
@@ -142,6 +148,35 @@ test('parseTAB reads .tab + .dat attributes (geometry best-effort)', () => {
   assert.equal(typeof f0.properties.SHAPE_Length, 'number');
   assert.equal(typeof f0.properties.SHAPE_Area, 'number');
   assert.equal(r.meta?.fieldCount, 8);
+});
+
+test('parseTAB decodes WindowsSimpChinese field names and subway line geometries', () => {
+  const r = parseTAB(findDataFile('地铁线路图层.TAB'));
+  assert.equal(r.features.length, 22);
+  assert.equal(r.meta?.charset, 'WindowsSimpChinese');
+  assert.equal(r.meta?.fieldCount, 1);
+  assert.equal(r.features[0].properties['地铁线路'], '5号线');
+  const geometries = r.features.map((f) => f.geometry).filter(Boolean);
+  assert.ok(geometries.length > 0, 'subway TAB should produce line geometries');
+  assert.ok(geometries.every((g) => g?.type === 'LineString' || g?.type === 'MultiLineString'));
+  const firstLine = geometries[0] as any;
+  const firstCoord = firstLine.type === 'LineString' ? firstLine.coordinates[0] : firstLine.coordinates[0][0];
+  assert.ok(firstCoord[0] > 100 && firstCoord[0] < 105, 'subway line longitude should decode from scaled MAP coordinates');
+  assert.ok(firstCoord[1] > 30 && firstCoord[1] < 31, 'subway line latitude should decode from scaled MAP coordinates');
+});
+
+test('parseTAB decodes WindowsSimpChinese attribute values in segmented subway lines', () => {
+  const r = parseTAB(findDataFile('地铁分段线路正反向.TAB'));
+  assert.equal(r.features.length, 819);
+  assert.equal(r.meta?.charset, 'WindowsSimpChinese');
+  assert.match(String(r.meta?.encoding), /gb/i);
+  assert.equal(r.features[0].properties['地市'], '成都');
+  assert.equal(r.features[0].properties['线路'], '9号线');
+  assert.equal(r.features[0].properties['编号'], 'D9-黄田坝-成都西站');
+  assert.equal(r.features[0].properties['正反向'], 'F');
+  const geometries = r.features.map((f) => f.geometry).filter(Boolean);
+  assert.ok(geometries.length > 0, 'segmented subway TAB should keep line geometries');
+  assert.ok(geometries.every((g) => g?.type === 'LineString' || g?.type === 'MultiLineString'));
 });
 
 test('KML coordinate parsing handles whitespace + commas', () => {
