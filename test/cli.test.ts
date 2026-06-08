@@ -293,3 +293,27 @@ test('convert command writes KML, GPX, and ESRI JSON from GeoJSON input', async 
   assert.equal(parseGPX(fs.readFileSync(gpxOut)).features.length, 2);
   assert.equal(parseEsriJSON(fs.readFileSync(esriOut)).features.length, 4);
 });
+
+test('tile command writes XYZ MVT PBF tiles', async () => {
+  const dir = tempDir();
+  const input = writeFixture(dir, 'input.geojson');
+  const output = path.join(dir, 'tiles');
+
+  await runCli(['tile', input, '-o', output, '--min-zoom', '0', '--max-zoom', '1', '--threads', '1', '--log-level', 'silent']);
+
+  const files = fs.readdirSync(output, { recursive: true }).map(String).filter((name) => name.endsWith('.pbf'));
+  assert.ok(files.length > 0, 'tile command should write pbf files');
+  const first = fs.readFileSync(path.join(output, files[0]));
+  assert.ok(first.length > 0, 'pbf tile should not be empty');
+});
+
+test('tile command rejects invalid zoom range', async () => {
+  const dir = tempDir();
+  const input = writeFixture(dir, 'input.geojson');
+  const output = path.join(dir, 'tiles');
+
+  await assert.rejects(
+    runCli(['tile', input, '-o', output, '--min-zoom', '3', '--max-zoom', '2', '--log-level', 'error']),
+    /min-zoom/i,
+  );
+});

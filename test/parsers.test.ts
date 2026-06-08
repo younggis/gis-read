@@ -24,6 +24,11 @@ import { parseEsriJSON, writeEsriJSON } from '../src/parsers/esrijson.js';
 import { parseMIF, writeMIF } from '../src/parsers/mif.js';
 import { writeShapefile } from '../src/parsers/shapefile-writer.js';
 import { writeTAB } from '../src/parsers/tab-writer.js';
+import {
+  computeWebMercatorBBox,
+  tileRangeForBBox,
+  writeVectorTiles,
+} from '../src/parsers/vector-tile.js';
 import { detectFormat } from '../src/format-detect.js';
 import {
   transformCoord,
@@ -596,6 +601,82 @@ test('writeTAB reports missing GDAL adapter clearly', () => {
     () => writeTAB(smallFeatureSet(), { outputPath: path.join(tempDir(), 'out.tab'), ogr2ogrPath: '__missing_ogr2ogr__' }),
     /GDAL\/OGR.*ogr2ogr/i,
   );
+});
+
+test('tileRangeForBBox computes XYZ ranges for WebMercator bbox', () => {
+  const world = 20037508.342789244;
+  const range = tileRangeForBBox([-world, -world, world, world], 1);
+  assert.deepEqual(range, { minX: 0, maxX: 1, minY: 0, maxY: 1 });
+});
+
+test('computeWebMercatorBBox scans transformed feature geometries', () => {
+  const bbox = computeWebMercatorBBox([
+    { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [0, 0] } },
+    { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [116.391, 39.907] } },
+  ], 'WGS84');
+  assert.ok(bbox[0] <= 0);
+  assert.ok(bbox[1] <= 0);
+  assert.ok(bbox[2] > 12_000_000);
+  assert.ok(bbox[3] > 4_000_000);
+});
+
+test('writeVectorTiles writes non-empty MVT PBF XYZ tiles', async () => {
+  const dir = tempDir();
+  const summary = await writeVectorTiles({
+    name: 'points',
+    features: [
+      { type: 'Feature', properties: { name: 'origin' }, geometry: { type: 'Point', coordinates: [0, 0] } },
+      { type: 'Feature', properties: { name: 'beijing' }, geometry: { type: 'Point', coordinates: [116.391, 39.907] } },
+    ],
+  }, {
+    outputPath: dir,
+    minZoom: 0,
+    maxZoom: 1,
+    threads: 1,
+    fromCrs: 'WGS84',
+    layerName: 'points',
+  });
+  assert.equal(summary.minZoom, 0);
+  assert.equal(summary.maxZoom, 1);
+  assert.equal(summary.featureCount, 2);
+  assert.ok(summary.generatedTiles > 0);
+  const pbfFiles = fs.readdirSync(dir, { recursive: true }).filter((name) => String(name).endsWith('.pbf'));
+  assert.ok(pbfFiles.length > 0);
+  const first = fs.readFileSync(path.join(dir, String(pbfFiles[0])));
+  assert.ok(first.length > 0);
+});
+
+test('writeVectorTiles supports multi-threaded tile generation', async () => {
+  const single = tempDir();
+  const multi = tempDir();
+  const result = {
+    name: 'points',
+    features: [
+      { type: 'Feature' as const, properties: { name: 'origin' }, geometry: { type: 'Point', coordinates: [0, 0] } },
+      { type: 'Feature' as const, properties: { name: 'beijing', large_id: 9_007_199_254_740_991 }, geometry: { type: 'Point', coordinates: [116.391, 39.907] } },
+    ],
+  };
+
+  const one = await writeVectorTiles(result, {
+    outputPath: single,
+    minZoom: 0,
+    maxZoom: 2,
+    threads: 1,
+    fromCrs: 'WGS84',
+    layerName: 'points',
+  });
+  const two = await writeVectorTiles(result, {
+    outputPath: multi,
+    minZoom: 0,
+    maxZoom: 2,
+    threads: 2,
+    fromCrs: 'WGS84',
+    layerName: 'points',
+  });
+
+  assert.equal(two.generatedTiles, one.generatedTiles);
+  assert.equal(two.emptyTilesSkipped, one.emptyTilesSkipped);
+  assert.equal(fs.readdirSync(multi, { recursive: true }).filter((name) => String(name).endsWith('.pbf')).length, one.generatedTiles);
 });
 
 test('parseEsriJSON reads FeatureSet and decodes rings/paths', () => {

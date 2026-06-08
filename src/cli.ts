@@ -18,6 +18,7 @@
  * All subcommands accept `-f/--format` to force a format (skips detection).
  */
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { Command, Option } from 'commander';
 import {
@@ -28,6 +29,7 @@ import {
   writeGPX,
   writeEsriJSON,
   writeFile,
+  tileFile,
   parseGeoJSONStream,
   formatKMLPlacemarkLines,
   type Format,
@@ -36,7 +38,7 @@ import { formatBytes, formatDuration, withErrorBoundary, readTextFile } from './
 import { getCRS, transformFeatures, transformGeometry, normalizeId } from './crs.js';
 import { log, Logger, type LogLevel } from './logger.js';
 
-const VERSION = '1.0.3';
+const VERSION = '1.0.4';
 
 const program = new Command();
 program
@@ -247,6 +249,38 @@ program
       out.end((err: Error | null | undefined) => err ? reject(err) : resolve());
     });
     done('Stream complete', { features: n, output: opts.output });
+  });
+
+program
+  .command('tile')
+  .description('Generate XYZ Mapbox Vector Tile (MVT/PBF) tiles from any supported vector input.')
+  .argument('<input>', 'input GIS file')
+  .requiredOption('-o, --output <dir>', 'output XYZ tile directory')
+  .option('--min-zoom <n>', 'minimum zoom level', (v) => Number(v), 0)
+  .option('--max-zoom <n>', 'maximum zoom level', (v) => Number(v), 14)
+  .option('--threads <n>', 'worker count hint', (v) => Number(v), Math.max(1, os.cpus().length - 1))
+  .option('--from-crs <crs>', 'source CRS before converting to WebMercator', 'WGS84')
+  .option('--layer <name>', 'MVT layer name')
+  .action(async (
+    input: string,
+    opts: { output: string; minZoom: number; maxZoom: number; threads: number; fromCrs: string; layer?: string },
+  ) => {
+    const done = log.startTimer('tile');
+    const summary = await tileFile(input, {
+      outputPath: opts.output,
+      minZoom: opts.minZoom,
+      maxZoom: opts.maxZoom,
+      threads: opts.threads,
+      fromCrs: opts.fromCrs,
+      layerName: opts.layer,
+    });
+    done('Tile generation complete', {
+      features: summary.featureCount,
+      tiles: summary.generatedTiles,
+      minZoom: summary.minZoom,
+      maxZoom: summary.maxZoom,
+      output: path.resolve(summary.outputPath),
+    });
   });
 
 program

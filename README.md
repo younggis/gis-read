@@ -9,6 +9,7 @@
 - Parse Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV/WKT, ESRI JSON, and MapInfo MIF.
 - Convert supported inputs to GeoJSON, KML, GPX, ESRI JSON, CSV/WKT, Shapefile, or MapInfo MIF. MapInfo TAB writing is available when GDAL `ogr2ogr` is installed.
 - Stream large GeoJSON files to GeoJSON/KML/GPX without loading the whole file into memory.
+- Generate standard XYZ Mapbox Vector Tile (`.pbf`) directories from supported vector inputs.
 - Read Shapefile DBF attributes record-by-record, including DBF files larger than 2 GiB, and decode UTF-8 Chinese field names when `.cpg` is present.
 - Preserve common metadata such as CRS, bbox, attributes, and parser-specific details.
 - Transform coordinates between WGS84, WebMercator, CGCS2000, GCJ-02, BD-09, and supported `EPSG:xxxx` definitions.
@@ -32,7 +33,7 @@ gis --help
 From a local package tarball:
 
 ```bash
-npm install -g ./gis-read-1.0.3.tgz
+npm install -g ./gis-read-1.0.4.tgz
 gis --help
 ```
 
@@ -63,6 +64,10 @@ gis convert input.geojson -o output.csv
 gis convert points.geojson -o points.shp -t shapefile
 gis convert input.geojson -o output.mif
 gis convert input.geojson -o output.tab -t tab # requires GDAL ogr2ogr
+
+# Generate MVT/PBF vector tiles
+gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
+gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 
 # Stream large GeoJSON files
 gis stream big.geojson -o big.kml
@@ -95,6 +100,7 @@ node dist/cli.js --help
 | CSV/WKT | `.csv` | Yes | Yes | Writes attributes plus a `wkt` geometry column. |
 | ESRI JSON | `.json` | Yes | Yes | Reads/writes ArcGIS-style geometry structures. |
 | MapInfo MIF | `.mif` + `.mid` | Yes | Yes | Writes text `.mif` plus attribute `.mid`. |
+| MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | No | Yes | Generated with `gis tile`; all input geometries are converted to WebMercator. |
 
 ## Library Usage
 
@@ -109,6 +115,8 @@ import {
   writeMIF,
   writeShapefile,
   writeFile,
+  tileFile,
+  writeVectorTiles,
   transformFeatures,
 } from 'gis-read';
 
@@ -124,6 +132,15 @@ writeFile(parsed, 'output.csv', 'csv', { precision: 6 });
 
 const manual = parseShapefile('input.shp');
 transformFeatures(manual.features, 'WGS84', 'WebMercator');
+
+await tileFile('input.shp', {
+  outputPath: 'tiles',
+  minZoom: 8,
+  maxZoom: 14,
+  fromCrs: 'WGS84',
+  threads: 4,
+  layerName: 'buildings',
+});
 ```
 
 Streaming GeoJSON:
@@ -172,7 +189,7 @@ npm start -- info input.geojson
 npm pack
 ```
 
-The test suite covers parser behavior, CLI conversion behavior, streaming GeoJSON, CRS transforms, encoding detection, and error handling.
+The test suite covers parser behavior, CLI conversion behavior, vector tile generation, streaming GeoJSON, CRS transforms, encoding detection, and error handling.
 
 ## Packaging
 
@@ -221,6 +238,8 @@ test/
 
 - Shapefile output writes one geometry family per bundle; split mixed Point/Line/Polygon data before exporting.
 - Shapefile DBF reading avoids Node's 2 GiB single-Buffer limit, but normal `parse` and `convert` still materialize the returned features in memory. Use `gis parse input.shp --limit 10` to inspect very large data first.
+- Vector tile generation writes XYZ `.pbf` directories only; MBTiles and GeoJSON tile output are not included.
+- Vector tile input is parsed into memory before tiling; use `--threads` to parallelize tile encoding across worker threads.
 - MapInfo TAB output delegates to GDAL `ogr2ogr`; install GDAL or write MapInfo MIF when `ogr2ogr` is unavailable.
 - CSV output stores geometry as WKT in a single `wkt` column.
 - GPX cannot represent polygons; polygon and multipolygon output is skipped.

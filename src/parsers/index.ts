@@ -23,6 +23,7 @@ import { writeKML } from './kml.js';
 import { writeMIF } from './mif.js';
 import { writeShapefile } from './shapefile-writer.js';
 import { writeTAB } from './tab-writer.js';
+import { writeVectorTiles, type TileOptions, type TileSummary } from './vector-tile.js';
 import { log, Logger } from '../logger.js';
 import { formatBytes } from '../io.js';
 
@@ -89,6 +90,17 @@ export function writeFile(result: ParseResult, outputPath: string, format?: Form
       throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, gpx, esrijson, csv, mif, shapefile, tab`);
   }
 }
+
+export async function tileFile(inputPath: string, opts: TileOptions): Promise<TileSummary> {
+  const result = parseFile(inputPath);
+  return writeVectorTiles(result, {
+    ...opts,
+    layerName: opts.layerName ?? result.name ?? inputPath.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, ''),
+  });
+}
+
+export { writeVectorTiles, computeWebMercatorBBox, tileRangeForBBox } from './vector-tile.js';
+export type { TileOptions, TileRange, TileSummary } from './vector-tile.js';
 
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';
