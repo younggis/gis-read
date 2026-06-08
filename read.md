@@ -1,6 +1,6 @@
 # gis-read
 
-当前版本：`1.0.3`
+当前版本：`1.0.4`
 
 中文 | [English](./README.md)
 
@@ -11,6 +11,7 @@
 - 解析 Shapefile、MapInfo TAB、GeoJSON、KML、GPX、TopoJSON、CZML、CSV/WKT、ESRI JSON、MapInfo MIF。
 - 支持把输入格式转换为 GeoJSON、KML、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF。MapInfo TAB 写出依赖本机安装 GDAL `ogr2ogr`。
 - 支持大 GeoJSON 流式转换到 GeoJSON/KML/GPX，避免一次性加载完整文件。
+- 支持从现有输入格式生成标准 XYZ Mapbox Vector Tile (`.pbf`) 矢量切片目录。
 - Shapefile 的 DBF 属性表按记录读取，支持超过 2 GiB 的 DBF 文件，并会按 `.cpg` 解码 UTF-8 中文字段名。
 - 保留常见元数据，例如 CRS、bbox、属性字段和格式相关 meta。
 - 支持 WGS84、WebMercator、CGCS2000、GCJ-02、BD-09，以及 `EPSG:xxxx` 坐标转换。
@@ -34,7 +35,7 @@ gis --help
 从本地 tarball 安装：
 
 ```bash
-npm install -g ./gis-read-1.0.3.tgz
+npm install -g ./gis-read-1.0.4.tgz
 gis --help
 ```
 
@@ -65,6 +66,10 @@ gis convert input.geojson -o output.csv
 gis convert points.geojson -o points.shp -t shapefile
 gis convert input.geojson -o output.mif
 gis convert input.geojson -o output.tab -t tab # 需要 GDAL ogr2ogr
+
+# 生成 MVT/PBF 矢量切片
+gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
+gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 
 # 大 GeoJSON 流式转换
 gis stream big.geojson -o big.kml
@@ -97,6 +102,7 @@ node dist/cli.js --help
 | CSV/WKT | `.csv` | 是 | 是 | 写出属性列和 `wkt` 几何列。 |
 | ESRI JSON | `.json` | 是 | 是 | 读取/写出 ArcGIS 风格几何结构。 |
 | MapInfo MIF | `.mif` + `.mid` | 是 | 是 | 写出文本 `.mif` 和属性 `.mid`。 |
+| MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | 否 | 是 | 通过 `gis tile` 生成，输入几何会统一转为 WebMercator。 |
 
 ## Node.js 库用法
 
@@ -111,6 +117,8 @@ import {
   writeMIF,
   writeShapefile,
   writeFile,
+  tileFile,
+  writeVectorTiles,
   transformFeatures,
 } from 'gis-read';
 
@@ -126,6 +134,15 @@ writeFile(parsed, 'output.csv', 'csv', { precision: 6 });
 
 const manual = parseShapefile('input.shp');
 transformFeatures(manual.features, 'WGS84', 'WebMercator');
+
+await tileFile('input.shp', {
+  outputPath: 'tiles',
+  minZoom: 8,
+  maxZoom: 14,
+  fromCrs: 'WGS84',
+  threads: 4,
+  layerName: 'buildings',
+});
 ```
 
 流式读取 GeoJSON：
@@ -174,7 +191,7 @@ npm start -- info input.geojson
 npm pack
 ```
 
-测试覆盖 parser 行为、CLI 转换行为、GeoJSON 流式处理、CRS 转换、编码检测和错误边界。
+测试覆盖 parser 行为、CLI 转换行为、矢量切片生成、GeoJSON 流式处理、CRS 转换、编码检测和错误边界。
 
 ## 打包
 
@@ -223,6 +240,8 @@ test/
 
 - Shapefile 写出要求同一个 bundle 只包含一种几何族；混合 Point/Line/Polygon 数据需要先拆分。
 - Shapefile DBF 读取已绕开 Node 单个 Buffer 的 2 GiB 限制，但普通 `parse` 和 `convert` 仍会把返回的 features 放入内存。处理超大数据前建议先用 `gis parse input.shp --limit 10` 检查。
+- 矢量切片当前只输出 XYZ `.pbf` 目录，不包含 MBTiles 或 GeoJSON tiles。
+- 矢量切片会先把输入 features 解析到内存，再按 `--threads` 使用 worker 线程并行编码切片。
 - MapInfo TAB 写出委托给 GDAL `ogr2ogr`；未安装 GDAL 时请改写 MapInfo MIF。
 - CSV 写出会把几何保存为单个 `wkt` 列。
 - GPX 不能表达面几何，Polygon / MultiPolygon 输出会被跳过。
