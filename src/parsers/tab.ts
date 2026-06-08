@@ -418,6 +418,12 @@ function parseMapObject(type: number, buf: Buffer, off: number, end = buf.length
     if (legacyType === 0x08 || legacyType === 0x26) {
       return parseLegacyLineObject(buf, off, end);
     }
+    if (legacyType === 0x25) {
+      return parseLegacyPointTableLine(buf, off, end);
+    }
+    if (legacyType === 0x0d) {
+      return parseLegacyRegionObject(buf, off, end);
+    }
     return null;
   } catch {
     return null;
@@ -465,6 +471,105 @@ function readLegacyScaledLine(buf: Buffer, p: number): number[][] | null {
 
 function isPlausibleLonLat(x: number, y: number): boolean {
   return Number.isFinite(x) && Number.isFinite(y) && x >= -180 && x <= 180 && y >= -90 && y <= 90;
+}
+
+function parseLegacyPointTableLine(buf: Buffer, off: number, end: number): Geometry | null {
+  const max = Math.min(end, buf.length, off + 8192);
+  const coords: number[][] = [];
+  let lastRel = -Infinity;
+
+  for (let p = off + 16; p + 7 < max; p++) {
+    const x = -buf.readInt32LE(p) / 1_000_000;
+    const y = buf.readInt32LE(p + 4) / 1_000_000;
+    if (!isPlausibleLonLat(x, y) || x < 70 || x > 140 || y < 0 || y > 60) continue;
+
+    const rel = p - off;
+    if (rel < 100) continue;
+    if (rel - lastRel < 16) continue;
+
+    coords.push([x, y]);
+    lastRel = rel;
+  }
+
+  if (coords.length < 2) return null;
+  return { type: 'LineString', coordinates: coords };
+}
+
+function parseLegacyRegionObject(buf: Buffer, off: number, end: number): Geometry | null {
+  const max = Math.min(end, buf.length, off + 8192);
+  const ref = findLegacyScaledReference(buf, off, max);
+  if (!ref) return null;
+
+  let bestRing: number[][] | null = null;
+  let bestArea = 0;
+
+  for (let p = off + 32; p + 8 < max; p++) {
+    const count = buf.readUInt32LE(p);
+    if (count < 4 || count > 10_000) continue;
+    if (p + 4 + count * 4 > max) continue;
+
+    const ring = readLegacyInt16Ring(buf, p + 4, count, ref);
+    if (!ring) continue;
+
+    const area = Math.abs(signedArea(ring));
+    if (area > bestArea) {
+      bestRing = ring;
+      bestArea = area;
+    }
+  }
+
+  return bestRing ? { type: 'Polygon', coordinates: [bestRing] } : null;
+}
+
+function findLegacyScaledReference(
+  buf: Buffer,
+  off: number,
+  max: number,
+): { x: number; y: number } | null {
+  const searchEnd = Math.min(max, off + 96);
+  for (let p = off + 8; p + 7 < searchEnd; p++) {
+    const x = -buf.readInt32LE(p) / 1_000_000;
+    const y = buf.readInt32LE(p + 4) / 1_000_000;
+    if (isPlausibleLegacyChinaLonLat(x, y)) return { x, y };
+  }
+  return null;
+}
+
+function isPlausibleLegacyChinaLonLat(x: number, y: number): boolean {
+  return isPlausibleLonLat(x, y) && x >= 70 && x <= 140 && y >= 0 && y <= 60;
+}
+
+function readLegacyInt16Ring(
+  buf: Buffer,
+  p: number,
+  count: number,
+  ref: { x: number; y: number },
+): number[][] | null {
+  const points: number[][] = [];
+  for (let i = 0; i < count; i++) {
+    const coordOff = p + i * 4;
+    const x = roundCoord(ref.x + buf.readInt16LE(coordOff) / 1_000_000);
+    const y = roundCoord(ref.y + buf.readInt16LE(coordOff + 2) / 1_000_000);
+    if (!isPlausibleLonLat(x, y)) return null;
+    points.push([x, y]);
+  }
+
+  for (let i = 3; i < points.length; i++) {
+    if (!sameCoord(points[0], points[i])) continue;
+    const ring = points.slice(0, i + 1);
+    if (Math.abs(signedArea(ring)) < 1e-12) return null;
+    return ring;
+  }
+
+  return null;
+}
+
+function roundCoord(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function sameCoord(a: number[], b: number[]): boolean {
+  return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
 }
 
 function parseLineOrPolyline(buf: Buffer, off: number): Geometry {

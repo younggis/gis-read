@@ -200,6 +200,15 @@ test('parseShapefile reads shp + dbf with attributes and polygon geometry', () =
   assert.ok(r.bbox![1] < r.bbox![3]);
 });
 
+test('parseShapefile detects UTF-8 attributes when .cpg is missing', () => {
+  const r = parseShapefile(path.join(DATA, 'Untitled_region.shp'));
+  assert.equal(r.features.length, 1);
+  assert.match(String(r.meta?.encoding), /utf-8 \(detected\)/i);
+  assert.equal(r.features[0].properties.name, '扎科乡');
+  assert.equal(r.features[0].properties.quhua, '513328205');
+  assert.equal(r.features[0].geometry?.type, 'Polygon');
+});
+
 test('parseTAB reads .tab + .dat attributes (geometry best-effort)', () => {
   const r = parseTAB(TAB);
   assert.equal(r.features.length, 1225);
@@ -228,6 +237,32 @@ test('parseTAB decodes WindowsSimpChinese field names, attribute values, and leg
   const firstCoord = firstLine.type === 'LineString' ? firstLine.coordinates[0] : firstLine.coordinates[0][0];
   assert.ok(firstCoord[0] > 100 && firstCoord[0] < 105, 'line longitude should decode from scaled MAP coordinates');
   assert.ok(firstCoord[1] > 30 && firstCoord[1] < 31, 'line latitude should decode from scaled MAP coordinates');
+});
+
+test('parseTAB decodes WindowsSimpChinese grid road line geometry', () => {
+  const r = parseTAB(path.join(DATA, '网格内道路图层.TAB'));
+  assert.equal(r.features.length, 28);
+  assert.equal(r.meta?.charset, 'WindowsSimpChinese');
+  const geometries = r.features.map((f) => f.geometry).filter(Boolean);
+  assert.ok(geometries.length > 0, 'grid road TAB should produce at least one line geometry');
+  assert.ok(geometries.every((g) => g?.type === 'LineString' || g?.type === 'MultiLineString'));
+  const firstLine = geometries[0] as any;
+  const coords = firstLine.type === 'LineString' ? firstLine.coordinates : firstLine.coordinates[0];
+  assert.ok(coords.length >= 2, 'grid road geometry should contain multiple points');
+  assert.ok(coords[0][0] > 100 && coords[0][0] < 105, 'grid road longitude should decode from scaled MAP coordinates');
+  assert.ok(coords[0][1] > 30 && coords[0][1] < 31, 'grid road latitude should decode from scaled MAP coordinates');
+});
+
+test('parseTAB decodes JN legacy region geometry', () => {
+  const r = parseTAB(path.join(DATA, 'JN-36-01.TAB'));
+  assert.equal(r.features.length, 1);
+  assert.equal(r.features[0].properties.JN, 'JN-36-01');
+  assert.equal(r.features[0].geometry?.type, 'Polygon');
+  const ring = (r.features[0].geometry as any).coordinates[0];
+  assert.ok(ring.length >= 4, 'JN region should contain a polygon ring');
+  assert.deepEqual(ring[0], ring[ring.length - 1], 'JN region ring should be closed');
+  assert.ok(ring[0][0] > 100 && ring[0][0] < 105, 'JN longitude should decode from scaled MAP coordinates');
+  assert.ok(ring[0][1] > 30 && ring[0][1] < 31, 'JN latitude should decode from scaled MAP coordinates');
 });
 
 test('KML coordinate parsing handles whitespace + commas', () => {
