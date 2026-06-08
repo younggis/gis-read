@@ -1,5 +1,7 @@
 # gis-read
 
+当前版本：`1.0.2`
+
 中文 | [English](./README.md)
 
 `gis-read` 是一个基于 TypeScript 的 GIS 数据解析与转换工具，同时提供命令行 CLI 和 Node.js 库 API。它会把不同 GIS 格式统一解析为 GeoJSON 风格的 Feature，再写出为 GeoJSON、KML、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF 等常用交换格式。
@@ -11,8 +13,8 @@
 - 支持大 GeoJSON 流式转换到 GeoJSON/KML/GPX，避免一次性加载完整文件。
 - 保留常见元数据，例如 CRS、bbox、属性字段和格式相关 meta。
 - 支持 WGS84、WebMercator、CGCS2000、GCJ-02、BD-09，以及 `EPSG:xxxx` 坐标转换。
-- 自动识别常见中文 GIS 字段编码，包括 `.cpg`、TAB 头、dBASE language driver 和内容启发式探测。
-- 支持 MapInfo TAB `WindowsSimpChinese` 字段名和属性值解码，并可读取常见 legacy 线对象几何。
+- 自动识别常见中文 GIS 字段编码，包括 `.cpg`、TAB 头、合法 UTF-8 DBF 字节、dBASE language driver 和内容启发式探测。
+- 支持 MapInfo TAB `WindowsSimpChinese` 字段名和属性值解码，并可读取常见 legacy 线对象、点表线对象和 `0x0D` 面对象几何。
 
 ## 环境要求
 
@@ -85,7 +87,7 @@ node dist/cli.js --help
 | 格式 | 扩展名 | 读取 | 写出 | 说明 |
 | --- | --- | --- | --- | --- |
 | Shapefile | `.shp` + sidecars | 是 | 是 | 写出 `.shp/.shx/.dbf/.cpg`；每个 bundle 只能包含一种几何族。 |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是* | 写出需要 GDAL `ogr2ogr`；支持 TAB 字符集、中文属性值和常见 legacy 线对象读取，部分私有 `.map` 记录仍可能返回 `null`。 |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是* | 写出需要 GDAL `ogr2ogr`；支持 TAB 字符集、中文属性值、常见 legacy 线对象、点表线对象和 `0x0D` 面对象读取，部分私有 `.map` 记录仍可能返回 `null`。 |
 | GeoJSON | `.geojson`, `.json` | 是 | 是 | 支持流式输入和输出。 |
 | KML | `.kml` | 是 | 是 | 支持 Placemark、ExtendedData、Point、LineString、Polygon、MultiGeometry。 |
 | GPX | `.gpx` | 是 | 是 | 支持 waypoint 和 track/route；Polygon 输出会被跳过。 |
@@ -220,7 +222,7 @@ test/
 - CSV 写出会把几何保存为单个 `wkt` 列。
 - GPX 不能表达面几何，Polygon / MultiPolygon 输出会被跳过。
 - KML 解析聚焦静态 Placemark 几何，不覆盖 NetworkLink、Region、LOD 等动态显示特性。
-- 部分 MapInfo TAB `.map` 私有 record 类型可能返回 `geometry: null`，但属性仍会返回；常见 legacy 线对象会解析为 `LineString` 或 `MultiLineString`。
+- 部分 MapInfo TAB `.map` 私有 record 类型可能返回 `geometry: null`，但属性仍会返回；常见 legacy 线对象和点表线对象会解析为 `LineString` 或 `MultiLineString`，常见 `0x0D` legacy region 点表会解析为 `Polygon`。
 
 ## 贡献
 
@@ -238,6 +240,10 @@ PR 描述中请说明影响的格式或 CLI 行为；如果行为变化明显，
 ## 安全
 
 请把 GIS 文件视为不可信输入。不要在高权限环境中处理来源不明的数据文件。不要提交 `.env`、日志、生成输出或大型本地样例数据。
+
+## MapInfo TAB 几何兼容说明
+
+当前版本支持读取常见 MapInfo TAB legacy 线对象、点表线对象，以及常见 `0x0D` legacy region 点表记录。线对象会输出为 `LineString` / `MultiLineString`，`0x0D` region 会输出为 `Polygon`。少数未识别的私有 `.map` record 仍可能返回 `geometry: null`，但属性字段会继续保留。
 
 ## License
 

@@ -108,10 +108,14 @@ function scoreBuffer(buf: Buffer, encoding: string): number {
 
   let score = 0;
   const len = decoded.length;
+  const validUtf8 = isValidUtf8(buf);
 
   // 1. Count replacement characters (U+FFFD) — strong signal of mis-decode.
   const replacementCount = (decoded.match(/�/g) ?? []).length;
   score -= replacementCount * 10;
+
+  if (validUtf8 && encoding === 'utf-8') score += 20;
+  if (validUtf8 && encoding !== 'utf-8') score -= 5;
 
   // 2. CJK Unified Ideographs (U+4E00–U+9FFF) and extensions.
   const cjkRe = /[一-鿿㐀-䶿]/g;
@@ -145,6 +149,15 @@ function scoreBuffer(buf: Buffer, encoding: string): number {
   // 7. Normalize by length so longer buffers don't dominate just by having more
   //    matches. We compare per-1000 characters.
   return score / Math.max(1, len / 1000);
+}
+
+function isValidUtf8(buf: Buffer): boolean {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -217,6 +217,31 @@ test('convert command decodes Chinese TAB fields, values, and legacy line geomet
   assert.ok(geometries.length > 0, 'converted TAB should include line geometries');
 });
 
+test('convert command preserves grid road TAB line geometry', async () => {
+  const dir = tempDir();
+  const output = path.join(dir, 'grid-road.geojson');
+
+  await runCli(['convert', path.join('data', '网格内道路图层.TAB'), '-o', output, '-t', 'geojson', '--log-level', 'silent']);
+
+  const parsed = parseGeoJSON(fs.readFileSync(output));
+  assert.equal(parsed.features.length, 28);
+  const geometries = parsed.features.map((f) => f.geometry).filter(Boolean);
+  assert.ok(geometries.length > 0, 'converted grid road TAB should include line geometries');
+  assert.ok(geometries.every((g) => g?.type === 'LineString' || g?.type === 'MultiLineString'));
+});
+
+test('convert command preserves JN TAB region geometry', async () => {
+  const dir = tempDir();
+  const output = path.join(dir, 'jn-region.geojson');
+
+  await runCli(['convert', path.join('data', 'JN-36-01.TAB'), '-o', output, '-t', 'geojson', '--log-level', 'silent']);
+
+  const parsed = parseGeoJSON(fs.readFileSync(output));
+  assert.equal(parsed.features.length, 1);
+  assert.equal(parsed.features[0].properties.JN, 'JN-36-01');
+  assert.equal(parsed.features[0].geometry?.type, 'Polygon');
+});
+
 test('convert command writes CSV, MIF, and Shapefile outputs from compatible GeoJSON input', async () => {
   const dir = tempDir();
   const points = path.join(dir, 'points.geojson');
