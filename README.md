@@ -9,6 +9,7 @@
 - Parse Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV/WKT, ESRI JSON, and MapInfo MIF.
 - Convert supported inputs to GeoJSON, KML, GPX, ESRI JSON, CSV/WKT, Shapefile, or MapInfo MIF. MapInfo TAB writing is available when GDAL `ogr2ogr` is installed.
 - Stream large GeoJSON files to GeoJSON/KML/GPX without loading the whole file into memory.
+- Read Shapefile DBF attributes record-by-record, including DBF files larger than 2 GiB, and decode UTF-8 Chinese field names when `.cpg` is present.
 - Preserve common metadata such as CRS, bbox, attributes, and parser-specific details.
 - Transform coordinates between WGS84, WebMercator, CGCS2000, GCJ-02, BD-09, and supported `EPSG:xxxx` definitions.
 - Detect common Chinese GIS text encodings from `.cpg`, TAB headers, valid UTF-8 DBF bytes, dBASE language drivers, and content heuristics.
@@ -31,7 +32,7 @@ gis --help
 From a local package tarball:
 
 ```bash
-npm install -g ./gis-read-0.1.0.tgz
+npm install -g ./gis-read-1.0.3.tgz
 gis --help
 ```
 
@@ -84,7 +85,7 @@ node dist/cli.js --help
 
 | Format | Extensions | Read | Write | Notes |
 | --- | --- | --- | --- | --- |
-| Shapefile | `.shp` + sidecars | Yes | Yes | Writes `.shp/.shx/.dbf/.cpg`; one geometry family per bundle. |
+| Shapefile | `.shp` + sidecars | Yes | Yes | Reads DBF attributes without one huge Buffer, supports UTF-8 Chinese field names from `.cpg`, and writes `.shp/.shx/.dbf/.cpg`; one geometry family per bundle. |
 | MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes* | Write requires GDAL `ogr2ogr`; reads TAB charsets, Chinese attributes, common legacy line records, point-table lines, and `0x0D` regions; unsupported private `.map` records may return `null`. |
 | GeoJSON | `.geojson`, `.json` | Yes | Yes | Streaming input and output supported. |
 | KML | `.kml` | Yes | Yes | Supports Placemark, ExtendedData, Point, LineString, Polygon, MultiGeometry. |
@@ -135,6 +136,8 @@ for await (const feature of parseGeoJSONStream('big.geojson')) {
 }
 ```
 
+For large Shapefiles, `parseShapefile('input.shp', { limit: 10 })` reads only the first matching SHP/DBF records, which is useful for checking schema and encoding before a full conversion.
+
 The main return shape is:
 
 ```ts
@@ -177,6 +180,7 @@ The npm package intentionally includes only runtime artifacts:
 
 - `dist/`
 - `README.md`
+- `read.md`
 - `操作手册.md`
 - `LICENSE`
 
@@ -216,6 +220,7 @@ test/
 ## Limitations
 
 - Shapefile output writes one geometry family per bundle; split mixed Point/Line/Polygon data before exporting.
+- Shapefile DBF reading avoids Node's 2 GiB single-Buffer limit, but normal `parse` and `convert` still materialize the returned features in memory. Use `gis parse input.shp --limit 10` to inspect very large data first.
 - MapInfo TAB output delegates to GDAL `ogr2ogr`; install GDAL or write MapInfo MIF when `ogr2ogr` is unavailable.
 - CSV output stores geometry as WKT in a single `wkt` column.
 - GPX cannot represent polygons; polygon and multipolygon output is skipped.

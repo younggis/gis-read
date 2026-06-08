@@ -24,7 +24,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { BBox, CRS, Feature, Geometry, ParseResult, Properties } from '../types.js';
+import type { BBox, CRS, Feature, Geometry, ParseOptions, ParseResult, Properties } from '../types.js';
 import { detectFormat } from '../format-detect.js';
 import { readCPG, detectEncoding, decoderFor, driverToEncoding, decodeStringField } from '../encoding.js';
 
@@ -52,20 +52,21 @@ interface DbfField {
 }
 
 /** Read a Shapefile (.shp + companion files) into our ParseResult. */
-export function parseShapefile(inputPath: string): ParseResult {
+export function parseShapefile(inputPath: string, opts: ParseOptions = {}): ParseResult {
   const base = stripExt(inputPath);
   const shpPath = base + '.shp';
   const dbfPath = base + '.dbf';
   const prjPath = base + '.prj';
   const cpgPath = base + '.cpg';
+  const limit = opts.limit && opts.limit > 0 ? Math.floor(opts.limit) : undefined;
 
   if (!fs.existsSync(shpPath)) throw new Error(`Shapefile not found: ${shpPath}`);
   if (detectFormat(shpPath) !== 'shapefile') {
     throw new Error(`Not a shapefile (bad magic): ${shpPath}`);
   }
 
-  const shp = readShpGeometry(shpPath);
-  const dbf = fs.existsSync(dbfPath) ? readDbf(dbfPath, cpgPath) : { records: [], fields: [], encoding: 'latin1' };
+  const shp = readShpGeometry(shpPath, limit);
+  const dbf = fs.existsSync(dbfPath) ? readDbf(dbfPath, cpgPath, limit) : { records: [], fields: [], encoding: 'latin1' };
   const prj = fs.existsSync(prjPath) ? fs.readFileSync(prjPath, 'utf8').trim() : undefined;
   const name = path.basename(base);
 
@@ -130,7 +131,7 @@ interface ShpRead {
   shapeType: number;
 }
 
-function readShpGeometry(shpPath: string): ShpRead {
+function readShpGeometry(shpPath: string, limit?: number): ShpRead {
   const buf = fs.readFileSync(shpPath);
   // Header: 100 bytes. Big fields: file length (24..27, big-endian 16-bit words).
   if (buf.length < 100) throw new Error('Shapefile too small');
@@ -150,7 +151,7 @@ function readShpGeometry(shpPath: string): ShpRead {
   let offset = 100;
   // Cap the loop to the declared file length; defensive against truncated files.
   const upper = Math.min(fileLength, buf.length);
-  while (offset + 8 <= upper) {
+  while (offset + 8 <= upper && (!limit || shapes.length < limit)) {
     // Record header: big-endian record number (4), big-endian content length in 16-bit words (4).
     const recNum = buf.readInt32BE(offset);
     const contentLenWords = buf.readInt32BE(offset + 4);
@@ -298,47 +299,73 @@ function signedArea(ring: number[][]): number {
 function readDbf(
   dbfPath: string,
   cpgPath?: string,
+  limit?: number,
 ): { records: Properties[]; fields: DbfField[]; encoding: string } {
-  const buf = fs.readFileSync(dbfPath);
+  const header = readDbfHeader(dbfPath);
+  if (header.length < 32) return { records: [], fields: [], encoding: 'latin1' };
 
   let encoding: string | null = readCPG(cpgPath);
   let source: 'cpg' | 'detected' | 'driver' = 'cpg';
   if (!encoding) {
     // Probe the first 4 KB of the data section (skip the 32-byte header and
     // field descriptors) so we don't get biased by binary header bytes.
-    const headerLen = buf.length >= 10 ? buf.readUInt16LE(8) : 32;
-    const sampleStart = Math.min(buf.length, headerLen);
-    const sampleEnd = Math.min(buf.length, sampleStart + 4096);
-    encoding = detectEncoding(buf.subarray(sampleStart, sampleEnd));
+    encoding = detectEncoding(readDbfSample(dbfPath, header.readUInt16LE(8), 4096));
     source = 'detected';
   }
   if (!encoding) {
-    const driver = buf.length > 29 ? buf[29] : 0;
+    const driver = header.length > 29 ? header[29] : 0;
     encoding = driverToEncoding(driver) ?? 'gb18030';
     source = 'driver';
   }
 
-  const result = readDbfRecords(buf, encoding);
+  const result = readDbfRecords(dbfPath, header, encoding, limit);
   return { ...result, encoding: `${encoding} (${source})` };
 }
 
-function readDbfRecords(buf: Buffer, encoding: string): { records: Properties[]; fields: DbfField[] } {
-  if (buf.length < 32) return { records: [], fields: [] };
+function readDbfHeader(dbfPath: string): Buffer {
+  const fd = fs.openSync(dbfPath, 'r');
+  try {
+    const base = Buffer.alloc(32);
+    const bytes = fs.readSync(fd, base, 0, base.length, 0);
+    if (bytes < 32) return base.subarray(0, bytes);
+    const headerLen = base.readUInt16LE(8);
+    const header = Buffer.alloc(headerLen);
+    base.copy(header, 0);
+    if (headerLen > 32) fs.readSync(fd, header, 32, headerLen - 32, 32);
+    return header;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
+function readDbfSample(dbfPath: string, start: number, size: number): Buffer {
+  const fd = fs.openSync(dbfPath, 'r');
+  try {
+    const sample = Buffer.alloc(size);
+    const bytes = fs.readSync(fd, sample, 0, sample.length, start);
+    return sample.subarray(0, bytes);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readDbfRecords(dbfPath: string, header: Buffer, encoding: string, limit?: number): { records: Properties[]; fields: DbfField[] } {
+  if (header.length < 32) return { records: [], fields: [] };
   // Header.
-  const numRecords = buf.readUInt32LE(4);
-  const headerLen = buf.readUInt16LE(8);
-  const recordLen = buf.readUInt16LE(10);
+  const numRecords = header.readUInt32LE(4);
+  const headerLen = header.readUInt16LE(8);
+  const recordLen = header.readUInt16LE(10);
 
   // Field descriptors: 32 bytes each, starting at byte 32; terminated by 0x0D.
+  const dec = decoderFor(encoding);
   const fields: DbfField[] = [];
   let off = 32;
-  while (off < headerLen - 1) {
-    if (buf[off] === 0x0d) break;
-    const name = readDbfFieldName(buf, off);
-    const type = String.fromCharCode(buf[off + 11]);
-    const size = buf[off + 16];
-    const decimals = buf[off + 17];
+  while (off + 32 <= headerLen && off + 32 <= header.length) {
+    if (header[off] === 0x0d) break;
+    const name = readDbfFieldName(header, off, dec);
+    const type = String.fromCharCode(header[off + 11]);
+    const size = header[off + 16];
+    const decimals = header[off + 17];
     fields.push({ name, type, size, decimals, offset: 0 });
     off += 32;
   }
@@ -349,35 +376,39 @@ function readDbfRecords(buf: Buffer, encoding: string): { records: Properties[];
     cursor += f.size;
   }
 
-  const dec = decoderFor(encoding);
   const records: Properties[] = [];
-  let pos = headerLen;
-  for (let r = 0; r < numRecords; r++) {
-    if (pos + recordLen > buf.length) break;
-    const deleted = buf[pos] === 0x2a; // '*'
-    const rec: Properties = {};
-    if (!deleted) {
-      for (const f of fields) {
-        const raw = buf.slice(pos + f.offset, pos + f.offset + f.size);
-        rec[f.name] = decodeDbfField(raw, f, dec);
+  const record = Buffer.alloc(recordLen);
+  const fd = fs.openSync(dbfPath, 'r');
+  try {
+    const maxRecords = limit ? Math.min(numRecords, limit) : numRecords;
+    for (let r = 0; r < maxRecords; r++) {
+      const pos = headerLen + r * recordLen;
+      const bytes = fs.readSync(fd, record, 0, recordLen, pos);
+      if (bytes < recordLen) break;
+      const deleted = record[0] === 0x2a; // '*'
+      const rec: Properties = {};
+      if (!deleted) {
+        for (const f of fields) {
+          const raw = record.subarray(f.offset, f.offset + f.size);
+          rec[f.name] = decodeDbfField(raw, f, dec);
+        }
       }
+      records.push(rec);
     }
-    records.push(rec);
-    pos += recordLen;
+  } finally {
+    fs.closeSync(fd);
   }
   return { records, fields };
 }
 
-function readDbfFieldName(buf: Buffer, off: number): string {
-  // Field names are always ASCII (8-bit code page labels), but to be safe
-  // decode via latin1 and trim at the first NUL.
-  let s = '';
+function readDbfFieldName(buf: Buffer, off: number, dec: (b: Buffer) => string): string {
+  let end = off;
   for (let i = 0; i < 11; i++) {
     const c = buf[off + i];
     if (c === 0) break;
-    s += String.fromCharCode(c);
+    end = off + i + 1;
   }
-  return s.trim();
+  return decodeStringField(buf.subarray(off, end), dec).replace(/\uFFFD+$/g, '').trim();
 }
 
 function decodeDbfField(raw: Buffer, f: DbfField, dec: (b: Buffer) => string): unknown {

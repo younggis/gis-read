@@ -36,7 +36,7 @@ import { formatBytes, formatDuration, withErrorBoundary, readTextFile } from './
 import { getCRS, transformFeatures, transformGeometry, normalizeId } from './crs.js';
 import { log, Logger, type LogLevel } from './logger.js';
 
-const VERSION = '0.1.0';
+const VERSION = '1.0.3';
 
 const program = new Command();
 program
@@ -90,7 +90,7 @@ program
   .option('--no-pretty', 'single-line JSON output')
   .action((file: string, opts: { format?: Format; limit: number; pretty: boolean }) => {
     const fmt = (opts.format as Format) ?? detectFormat(file);
-    const result = parseFile(file, fmt as Format);
+    const result = parseFile(file, fmt as Format, { limit: opts.limit });
     const features = opts.limit > 0 ? result.features.slice(0, opts.limit) : result.features;
     const trimmed = { ...result, features };
     process.stdout.write(JSON.stringify(trimmed, null, opts.pretty ? 2 : undefined));
