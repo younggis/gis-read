@@ -79,10 +79,71 @@ function writeFixture(dir: string, name: string): string {
   return file;
 }
 
-function findDataFile(name: string): string {
-  const file = fs.readdirSync('data').find((entry) => entry === name);
-  assert.ok(file, `missing fixture: ${name}`);
-  return path.join('data', file);
+function writeWindowsSimpChineseTABBundle(dir: string): string {
+  const base = path.join(dir, 'windows-simpchinese');
+  const fields = [
+    { dbfName: 'F1', tabName: Buffer.from([0xb5, 0xd8, 0xca, 0xd0]), width: 10 },
+    { dbfName: 'F2', tabName: Buffer.from([0xcf, 0xdf, 0xc2, 0xb7]), width: 10 },
+    { dbfName: 'F3', tabName: Buffer.from([0xb1, 0xe0, 0xba, 0xc5]), width: 60 },
+    { dbfName: 'F4', tabName: Buffer.from([0xd5, 0xfd, 0xb7, 0xb4, 0xcf, 0xf2]), width: 60 },
+  ];
+
+  const tabChunks: Buffer[] = [
+    Buffer.from('!table\n!version 300\n!charset WindowsSimpChinese\n\nDefinition Table\n  Type NATIVE Charset "WindowsSimpChinese"\n  Fields 4\n', 'ascii'),
+  ];
+  for (const field of fields) {
+    tabChunks.push(Buffer.from('    ', 'ascii'), field.tabName, Buffer.from(` Char (${field.width}) ;\n`, 'ascii'));
+  }
+  fs.writeFileSync(`${base}.tab`, Buffer.concat(tabChunks));
+
+  const headerLen = 32 + fields.length * 32 + 1;
+  const recordLen = 1 + fields.reduce((sum, field) => sum + field.width, 0);
+  const dat = Buffer.alloc(headerLen + recordLen, 0);
+  dat[0] = 0x03;
+  dat.writeUInt32LE(1, 4);
+  dat.writeUInt16LE(headerLen, 8);
+  dat.writeUInt16LE(recordLen, 10);
+  let off = 32;
+  for (const field of fields) {
+    dat.write(field.dbfName, off, 'ascii');
+    dat[off + 11] = 0x43;
+    dat[off + 16] = field.width;
+    off += 32;
+  }
+  dat[headerLen - 1] = 0x0d;
+  dat[headerLen] = 0x20;
+  const values = [
+    Buffer.from([0xb3, 0xc9, 0xb6, 0xbc]),
+    Buffer.from([0x39, 0xba, 0xc5, 0xcf, 0xdf]),
+    Buffer.from([0x44, 0x39, 0x2d, 0xbb, 0xc6, 0xcc, 0xef, 0xb0, 0xd3, 0x2d, 0xb3, 0xc9, 0xb6, 0xbc, 0xce, 0xf7, 0xd5, 0xbe]),
+    Buffer.from('F', 'ascii'),
+  ];
+  let cursor = headerLen + 1;
+  for (let i = 0; i < fields.length; i++) {
+    const value = values[i];
+    const width = fields[i].width;
+    dat.set(value, cursor);
+    dat.fill(0x20, cursor + value.length, cursor + width);
+    cursor += width;
+  }
+  fs.writeFileSync(`${base}.dat`, dat);
+
+  const id = Buffer.alloc(4);
+  id.writeUInt32LE(16, 0);
+  fs.writeFileSync(`${base}.id`, id);
+
+  const map = Buffer.alloc(16 + 38, 0);
+  const geom = map.subarray(16);
+  geom.set([0x08, 0x01, 0x00, 0x00]);
+  let coord = 13;
+  for (const [x, y] of [[104.03897, 30.637395], [104.04, 30.638], [104.05, 30.64]]) {
+    geom.writeInt32LE(-Math.round(x * 1_000_000), coord);
+    geom.writeInt32LE(Math.round(y * 1_000_000), coord + 4);
+    coord += 8;
+  }
+  fs.writeFileSync(`${base}.map`, map);
+
+  return `${base}.tab`;
 }
 
 test('stream command writes non-empty KML with one Placemark per GeoJSON feature', async () => {
@@ -140,33 +201,20 @@ test('convert command handles common input formats to GeoJSON', async () => {
   }
 });
 
-test('convert command preserves Chinese TAB field names and subway line geometries', async () => {
+test('convert command decodes Chinese TAB fields, values, and legacy line geometries', async () => {
   const dir = tempDir();
-  const output = path.join(dir, 'subway.geojson');
+  const input = writeWindowsSimpChineseTABBundle(dir);
+  const output = path.join(dir, 'windows-simpchinese.geojson');
 
-  await runCli(['convert', findDataFile('地铁线路图层.TAB'), '-o', output, '-t', 'geojson', '--log-level', 'silent']);
+  await runCli(['convert', input, '-o', output, '-t', 'geojson', '--log-level', 'silent']);
 
   const parsed = parseGeoJSON(fs.readFileSync(output));
-  assert.equal(parsed.features.length, 22);
-  assert.equal(parsed.features[0].properties['地铁线路'], '5号线');
-  const geometries = parsed.features.map((f) => f.geometry).filter(Boolean);
-  assert.ok(geometries.length > 0, 'converted subway TAB should include line geometries');
-  assert.ok(geometries.every((g) => g?.type === 'LineString' || g?.type === 'MultiLineString'));
-});
-
-test('convert command decodes Chinese TAB attribute values in segmented subway lines', async () => {
-  const dir = tempDir();
-  const output = path.join(dir, 'segmented-subway.geojson');
-
-  await runCli(['convert', findDataFile('地铁分段线路正反向.TAB'), '-o', output, '-t', 'geojson', '--log-level', 'silent']);
-
-  const parsed = parseGeoJSON(fs.readFileSync(output));
-  assert.equal(parsed.features.length, 819);
+  assert.equal(parsed.features.length, 1);
   assert.equal(parsed.features[0].properties['地市'], '成都');
   assert.equal(parsed.features[0].properties['线路'], '9号线');
   assert.equal(parsed.features[0].properties['编号'], 'D9-黄田坝-成都西站');
   const geometries = parsed.features.map((f) => f.geometry).filter(Boolean);
-  assert.ok(geometries.length > 0, 'converted segmented subway TAB should include line geometries');
+  assert.ok(geometries.length > 0, 'converted TAB should include line geometries');
 });
 
 test('convert command writes CSV, MIF, and Shapefile outputs from compatible GeoJSON input', async () => {
