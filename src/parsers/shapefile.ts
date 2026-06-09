@@ -26,7 +26,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { BBox, CRS, Feature, Geometry, ParseOptions, ParseResult, Properties } from '../types.js';
 import { detectFormat } from '../format-detect.js';
-import { readCPG, detectEncoding, decoderFor, driverToEncoding, decodeStringField } from '../encoding.js';
+import { readCPG, detectEncoding, decoderFor, driverToEncoding, decodeStringField, overrideBadEncodingHint } from '../encoding.js';
 
 // Shape type codes.
 const SHAPE_NULL = 0;
@@ -304,12 +304,20 @@ function readDbf(
   const header = readDbfHeader(dbfPath);
   if (header.length < 32) return { records: [], fields: [], encoding: 'latin1' };
 
+  const sample = readDbfSample(dbfPath, header.readUInt16LE(8), 4096);
   let encoding: string | null = readCPG(cpgPath);
   let source: 'cpg' | 'detected' | 'driver' = 'cpg';
+  if (encoding) {
+    const override = overrideBadEncodingHint(encoding, sample);
+    if (override) {
+      encoding = override;
+      source = 'detected';
+    }
+  }
   if (!encoding) {
     // Probe the first 4 KB of the data section (skip the 32-byte header and
     // field descriptors) so we don't get biased by binary header bytes.
-    encoding = detectEncoding(readDbfSample(dbfPath, header.readUInt16LE(8), 4096));
+    encoding = detectEncoding(sample);
     source = 'detected';
   }
   if (!encoding) {

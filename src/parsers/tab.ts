@@ -28,7 +28,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Feature, Geometry, ParseResult, Properties } from '../types.js';
-import { readCPG, detectEncoding, decoderFor, driverToEncoding as _driver, decodeStringField } from '../encoding.js';
+import { readCPG, detectEncoding, decoderFor, driverToEncoding as _driver, decodeStringField, overrideBadEncodingHint } from '../encoding.js';
 // Re-export to keep the existing in-file helper signature stable.
 const driverToEncoding = _driver;
 
@@ -110,7 +110,6 @@ function readTabText(tabPath: string): string {
 function mapTabCharset(charset: string): string | null {
   const cs = charset.toLowerCase().replace(/^["']|["']$/g, '').replace(/[^a-z0-9-]/g, '');
   const table: Record<string, string> = {
-    neutral: 'latin1',
     windowslatin1: 'windows-1252',
     windows1252: 'windows-1252',
     utf8: 'utf-8',
@@ -215,8 +214,16 @@ function readDat(datPath: string, header: TabHeader, cpgPath?: string): { record
   //   2. !charset line in the .tab text (e.g. "!charset Neutral", "!charset WindowsLatin1")
   //   3. Heuristic probe of the .dat buffer
   //   4. dBASE language driver byte (offset 29)
+  const sample = collectDatTextSample(buf, headerLen, recordLen, numRecords, fields, tabTypes);
   let encoding = readCPG(cpgPath);
   let source: 'cpg' | 'tab-charset' | 'detected' | 'driver' = 'cpg';
+  if (encoding) {
+    const override = overrideBadEncodingHint(encoding, sample);
+    if (override) {
+      encoding = override;
+      source = 'detected';
+    }
+  }
   if (!encoding) {
     // Try .tab's !charset line.
     const tabCharsetEncoding = mapTabCharset(header.charset || '');
@@ -227,8 +234,7 @@ function readDat(datPath: string, header: TabHeader, cpgPath?: string): { record
   }
   if (!encoding) {
     // Probe a sample of the data section.
-    const sampleEnd = Math.min(buf.length, headerLen + 4096);
-    encoding = detectEncoding(buf.subarray(headerLen, sampleEnd));
+    encoding = detectEncoding(sample);
     source = 'detected';
   }
   if (!encoding) {
@@ -270,6 +276,42 @@ function readZeroString(buf: Buffer, off: number, len: number): string {
     s += String.fromCharCode(c);
   }
   return s.trim();
+}
+
+function collectDatTextSample(
+  buf: Buffer,
+  headerLen: number,
+  recordLen: number,
+  numRecords: number,
+  fields: TabField[],
+  tabTypes: string[],
+  maxBytes = 4096,
+): Buffer {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const maxRecords = Math.min(numRecords, 64);
+  for (let r = 0; r < maxRecords && total < maxBytes; r++) {
+    const pos = headerLen + r * recordLen;
+    if (pos + recordLen > buf.length) break;
+    if (buf[pos] === 0x2a) continue;
+    let cursor = 1;
+    for (let i = 0; i < fields.length && total < maxBytes; i++) {
+      const f = fields[i];
+      const tabType = tabTypes[i]?.toLowerCase();
+      const dbfType = f.type.toUpperCase();
+      const raw = buf.subarray(pos + cursor, pos + cursor + f.size);
+      const isText = tabType
+        ? tabType === 'char' || tabType === 'string'
+        : dbfType === 'C';
+      if (isText) {
+        chunks.push(raw, Buffer.from([0x20]));
+        total += raw.length + 1;
+      }
+      cursor += f.size;
+    }
+  }
+  if (chunks.length > 0) return Buffer.concat(chunks, Math.min(total, maxBytes)).subarray(0, maxBytes);
+  return buf.subarray(headerLen, Math.min(buf.length, headerLen + maxBytes));
 }
 
 function decodeDatField(
@@ -482,7 +524,7 @@ function parseMapObject(type: number, buf: Buffer, off: number, end = buf.length
       return parseLegacyLineObject(buf, off, end);
     }
     if (legacyType === 0x25) {
-      return parseLegacyPointTableLine(buf, off, end);
+      return parseV500PointTableLine(buf, off, transform) ?? parseLegacyPointTableLine(buf, off, end);
     }
     if (legacyType === 0x0d || legacyType === 0x0e) {
       return parseLegacyRegionObject(buf, off, end, transform);
@@ -555,6 +597,40 @@ function parseLegacyPointTableLine(buf: Buffer, off: number, end: number): Geome
   }
 
   if (coords.length < 2) return null;
+  return { type: 'LineString', coordinates: coords };
+}
+
+function parseV500PointTableLine(buf: Buffer, off: number, transform: MapTransform | null): Geometry | null {
+  if (!transform || transform.version < 500 || buf[off] !== 0x25 || off + 36 > buf.length) return null;
+
+  const coordBlockPtr = buf.readUInt32LE(off + 5);
+  const objectLen = buf.readUInt32LE(off + 9);
+  const orgX = buf.readInt32LE(off + 19);
+  const orgY = buf.readInt32LE(off + 23);
+  if (
+    objectLen < 24 ||
+    coordBlockPtr <= 0 ||
+    coordBlockPtr + 16 > buf.length ||
+    !Number.isFinite(orgX) ||
+    !Number.isFinite(orgY)
+  ) {
+    return null;
+  }
+
+  const npts = buf.readUInt32LE(coordBlockPtr);
+  const coordStart = coordBlockPtr + 16;
+  if (npts < 2 || npts > 100_000 || coordStart + npts * 4 > buf.length) return null;
+
+  const coords: number[][] = [];
+  let p = coordStart;
+  for (let i = 0; i < npts; i++) {
+    const dx = buf.readInt16LE(p);
+    const dy = buf.readInt16LE(p + 2);
+    const coord = mapIntToCoord(transform, orgX + dx, orgY + dy);
+    if (!isPlausibleLonLat(coord[0], coord[1])) return null;
+    coords.push(coord);
+    p += 4;
+  }
   return { type: 'LineString', coordinates: coords };
 }
 

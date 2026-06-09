@@ -90,8 +90,8 @@ function assertBBoxClose(actual: [number, number, number, number], expected: [nu
   }
 }
 
-function writeWindowsSimpChineseTABBundle(dir: string): string {
-  const base = path.join(dir, 'windows-simpchinese');
+function writeWindowsSimpChineseTABBundle(dir: string, charset = 'WindowsSimpChinese'): string {
+  const base = path.join(dir, `tab-${charset.toLowerCase()}`);
   const fields = [
     { dbfName: 'F1', tabName: Buffer.from([0xb5, 0xd8, 0xca, 0xd0]), width: 10 },
     { dbfName: 'F2', tabName: Buffer.from([0xcf, 0xdf, 0xc2, 0xb7]), width: 10 },
@@ -100,7 +100,7 @@ function writeWindowsSimpChineseTABBundle(dir: string): string {
   ];
 
   const tabChunks: Buffer[] = [
-    Buffer.from('!table\n!version 300\n!charset WindowsSimpChinese\n\nDefinition Table\n  Type NATIVE Charset "WindowsSimpChinese"\n  Fields 4\n', 'ascii'),
+    Buffer.from(`!table\n!version 300\n!charset ${charset}\n\nDefinition Table\n  Type NATIVE Charset "${charset}"\n  Fields 4\n`, 'ascii'),
   ];
   for (const field of fields) {
     tabChunks.push(Buffer.from('    ', 'ascii'), field.tabName, Buffer.from(` Char (${field.width}) ;\n`, 'ascii'));
@@ -155,6 +155,160 @@ function writeWindowsSimpChineseTABBundle(dir: string): string {
   fs.writeFileSync(`${base}.map`, map);
 
   return `${base}.tab`;
+}
+
+function writeV500PointTableLineTABBundle(dir: string): string {
+  const base = path.join(dir, 'v500-point-table-line');
+  fs.writeFileSync(`${base}.tab`, [
+    '!table',
+    '!version 500',
+    '!charset Neutral',
+    '',
+    'Definition Table',
+    '  Type NATIVE Charset "Neutral"',
+    '  Fields 1',
+    '    name Char (20) ;',
+    '',
+  ].join('\n'));
+
+  const headerLen = 32 + 32 + 1;
+  const recordLen = 1 + 20;
+  const dat = Buffer.alloc(headerLen + recordLen * 2, 0);
+  dat[0] = 0x03;
+  dat.writeUInt32LE(2, 4);
+  dat.writeUInt16LE(headerLen, 8);
+  dat.writeUInt16LE(recordLen, 10);
+  dat.write('name', 32, 'ascii');
+  dat[32 + 11] = 0x43;
+  dat[32 + 16] = 20;
+  dat[headerLen - 1] = 0x0d;
+  dat[headerLen] = 0x20;
+  Buffer.from('road', 'ascii').copy(dat, headerLen + 1);
+  dat.fill(0x20, headerLen + 5, headerLen + recordLen);
+  dat[headerLen + recordLen] = 0x20;
+  Buffer.from('road2', 'ascii').copy(dat, headerLen + recordLen + 1);
+  dat.fill(0x20, headerLen + recordLen + 6, headerLen + recordLen * 2);
+  fs.writeFileSync(`${base}.dat`, dat);
+
+  const objectOffset = 512;
+  const coordBlockOffset = 1024;
+  const objectOffset2 = 560;
+  const coordBlockOffset2 = 1100;
+  const id = Buffer.alloc(8);
+  id.writeUInt32LE(objectOffset, 0);
+  id.writeUInt32LE(objectOffset2, 4);
+  fs.writeFileSync(`${base}.id`, id);
+
+  const map = Buffer.alloc(2048, 0);
+  map.writeInt16LE(500, 0x104);
+  map.writeInt16LE(512, 0x106);
+  map[0x161] = 1;
+  map.writeDoubleLE(1_000_000, 0x170);
+  map.writeDoubleLE(1_000_000, 0x178);
+  map.writeDoubleLE(0, 0x180);
+  map.writeDoubleLE(0, 0x188);
+
+  const originX = 106_811_144;
+  const originY = 31_720_798;
+  map[objectOffset] = 0x25;
+  map.writeUInt32LE(1, objectOffset + 1);
+  map.writeUInt32LE(coordBlockOffset, objectOffset + 5);
+  map.writeUInt32LE(36, objectOffset + 9);
+  map.writeUInt16LE(1, objectOffset + 13);
+  map.writeInt32LE(originX, objectOffset + 19);
+  map.writeInt32LE(originY, objectOffset + 23);
+
+  const deltas = [
+    [-1683, -1216],
+    [-382, -386],
+    [854, 453],
+    [1674, 1201],
+    [1684, 1216],
+  ];
+  map.writeUInt32LE(deltas.length, coordBlockOffset);
+  map.writeInt16LE(-1683, coordBlockOffset + 4);
+  map.writeInt16LE(-1216, coordBlockOffset + 6);
+  map.writeInt16LE(1684, coordBlockOffset + 8);
+  map.writeInt16LE(1216, coordBlockOffset + 10);
+  map.writeUInt32LE(24, coordBlockOffset + 12);
+  let cursor = coordBlockOffset + 16;
+  for (const [dx, dy] of deltas) {
+    map.writeInt16LE(dx, cursor);
+    map.writeInt16LE(dy, cursor + 2);
+    cursor += 4;
+  }
+
+  const originX2 = 107_386_386;
+  const originY2 = 31_880_807;
+  map[objectOffset2] = 0x25;
+  map.writeUInt32LE(2, objectOffset2 + 1);
+  map.writeUInt32LE(coordBlockOffset2, objectOffset2 + 5);
+  map.writeUInt32LE(24, objectOffset2 + 9);
+  map.writeUInt16LE(1, objectOffset2 + 13);
+  map.writeInt32LE(originX2, objectOffset2 + 19);
+  map.writeInt32LE(originY2, objectOffset2 + 23);
+  const deltas2 = [[-2237, 23], [2237, -23]];
+  map.writeUInt32LE(deltas2.length, coordBlockOffset2);
+  map.writeInt16LE(-2237, coordBlockOffset2 + 4);
+  map.writeInt16LE(-23, coordBlockOffset2 + 6);
+  map.writeInt16LE(2237, coordBlockOffset2 + 8);
+  map.writeInt16LE(23, coordBlockOffset2 + 10);
+  map.writeUInt32LE(24, coordBlockOffset2 + 12);
+  cursor = coordBlockOffset2 + 16;
+  for (const [dx, dy] of deltas2) {
+    map.writeInt16LE(dx, cursor);
+    map.writeInt16LE(dy, cursor + 2);
+    cursor += 4;
+  }
+  fs.writeFileSync(`${base}.map`, map);
+  return `${base}.tab`;
+}
+
+function writeMislabeledGbkShapefile(dir: string): string {
+  const shp = path.join(dir, 'mislabeled-gbk.shp');
+  writeShapefile({
+    name: 'mislabeled-gbk',
+    features: [{
+      type: 'Feature',
+      properties: { F1: 'placeholder', F2: 'placeholder' },
+      geometry: { type: 'Point', coordinates: [107.25, 31.85] },
+    }],
+  }, { outputPath: shp });
+
+  const fields = [
+    { name: Buffer.from([0xb5, 0xd8, 0xca, 0xd0]), size: 20 }, // 地市
+    { name: Buffer.from([0xc7, 0xf8, 0xcf, 0xd8]), size: 30 }, // 区县
+  ];
+  const headerLen = 32 + fields.length * 32 + 1;
+  const recordLen = 1 + fields.reduce((sum, field) => sum + field.size, 0);
+  const dbf = Buffer.alloc(headerLen + recordLen + 1, 0x20);
+  dbf[0] = 0x03;
+  dbf.writeUInt32LE(1, 4);
+  dbf.writeUInt16LE(headerLen, 8);
+  dbf.writeUInt16LE(recordLen, 10);
+  dbf[29] = 0x57;
+  let descriptor = 32;
+  for (const field of fields) {
+    field.name.copy(dbf, descriptor, 0, Math.min(field.name.length, 11));
+    dbf[descriptor + 11] = 0x43;
+    dbf[descriptor + 16] = field.size;
+    descriptor += 32;
+  }
+  dbf[headerLen - 1] = 0x0d;
+  dbf[headerLen] = 0x20;
+  const values = [
+    Buffer.from([0xb0, 0xcd, 0xd6, 0xd0]), // 巴中
+    Buffer.from([0xb0, 0xcd, 0xd6, 0xdd, 0xc7, 0xf8]), // 巴州区
+  ];
+  let cursor = headerLen + 1;
+  for (let i = 0; i < fields.length; i++) {
+    values[i].copy(dbf, cursor);
+    cursor += fields[i].size;
+  }
+  dbf[dbf.length - 1] = 0x1a;
+  fs.writeFileSync(shp.replace(/\.shp$/i, '.dbf'), dbf);
+  fs.writeFileSync(shp.replace(/\.shp$/i, '.cpg'), 'UTF-8\n', 'utf8');
+  return shp;
 }
 
 function smallFeatureSet() {
@@ -302,6 +456,14 @@ test('parseShapefile decodes UTF-8 DBF field names from .cpg', () => {
   assert.equal(r.features[0].properties.NAME, '青城1号1栋');
 });
 
+test('parseShapefile recovers GBK attributes when .cpg is mislabeled as UTF-8', () => {
+  const r = parseShapefile(writeMislabeledGbkShapefile(tempDir()));
+  assert.equal(r.features.length, 1);
+  assert.match(String(r.meta?.encoding), /gb/i);
+  assert.equal(r.features[0].properties['地市'], '巴中');
+  assert.equal(r.features[0].properties['区县'], '巴州区');
+});
+
 test('parseShapefile supports limiting parsed features', () => {
   const r = parseShapefile(SHP, { limit: 2 });
   assert.equal(r.features.length, 2);
@@ -356,6 +518,32 @@ test('parseTAB decodes WindowsSimpChinese field names, attribute values, and leg
   const firstCoord = firstLine.type === 'LineString' ? firstLine.coordinates[0] : firstLine.coordinates[0][0];
   assert.ok(firstCoord[0] > 100 && firstCoord[0] < 105, 'line longitude should decode from scaled MAP coordinates');
   assert.ok(firstCoord[1] > 30 && firstCoord[1] < 31, 'line latitude should decode from scaled MAP coordinates');
+});
+
+test('parseTAB detects GBK attributes when TAB charset is Neutral', () => {
+  const r = parseTAB(writeWindowsSimpChineseTABBundle(tempDir(), 'Neutral'));
+  assert.equal(r.features.length, 1);
+  assert.equal(r.meta?.charset, 'Neutral');
+  assert.match(String(r.meta?.encoding), /gb/i);
+  assert.equal(r.features[0].properties['地市'], '成都');
+  assert.equal(r.features[0].properties['线路'], '9号线');
+  assert.equal(r.features[0].properties['编号'], 'D9-黄田坝-成都西站');
+});
+
+test('parseTAB decodes v500 point-table line geometry', () => {
+  const r = parseTAB(writeV500PointTableLineTABBundle(tempDir()));
+  assert.equal(r.meta?.version, 500);
+  assert.equal(r.features.length, 2);
+  assert.equal(r.features[0].geometry?.type, 'LineString');
+  const coords = (r.features[0].geometry as any).coordinates;
+  assert.equal(coords.length, 5);
+  assert.deepEqual(coords[0], [106.809461, 31.719582]);
+  assert.deepEqual(coords[4], [106.812828, 31.722014]);
+  assert.equal(r.features[1].geometry?.type, 'LineString');
+  const coords2 = (r.features[1].geometry as any).coordinates;
+  assert.equal(coords2.length, 2);
+  assert.deepEqual(coords2[0], [107.384149, 31.88083]);
+  assert.deepEqual(coords2[1], [107.388623, 31.880784]);
 });
 
 test('parseTAB decodes WindowsSimpChinese grid road line geometry', { skip: skipIfMissing(GRID_ROAD_TAB) }, () => {
@@ -859,6 +1047,28 @@ test('detectEncoding chooses UTF-8 for a UTF-8 Chinese string', () => {
 test('detectEncoding chooses GBK/GB18030 for GBK-encoded Chinese', () => {
   // "中国" in GBK is 0xD6D0 0xB9FA. In UTF-8 the same bytes would be invalid.
   const buf = Buffer.from([0xD6, 0xD0, 0xB9, 0xFA, 0xC8, 0xCB, 0xC3, 0xF1, 0xBA, 0xD0, 0xCC, 0xEC]);
+  const enc = detectEncoding(buf);
+  assert.ok(enc === 'gb18030' || enc === 'gbk', `expected GBK family, got: ${enc}`);
+});
+
+test('detectEncoding chooses GBK/GB18030 for null-padded Chinese DBF samples', () => {
+  const buf = Buffer.from([
+    0xb0, 0xcd, 0xd6, 0xd0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0xb0, 0xcd, 0xd6, 0xdd, 0xc7, 0xf8, 0, 0, 0, 0,
+    0x47, 0x38, 0x35, 0xd2, 0xf8, 0xc0, 0xa5, 0xb8, 0xdf, 0xcb, 0xd9,
+  ]);
+  const enc = detectEncoding(buf);
+  assert.ok(enc === 'gb18030' || enc === 'gbk', `expected GBK family, got: ${enc}`);
+});
+
+test('detectEncoding chooses GBK/GB18030 for mixed GBK DBF samples with placeholders', () => {
+  const buf = Buffer.from(
+    'b0cdd6d0202020202020202020202020202020203fbdadcfd820202020202020' +
+    '2020202020202020202020202020202020203838343420202020202020202020' +
+    '202020202020202020202020202020205331353fb9e3b8dfcbd9202020202020' +
+    '2020202020202020202020202020b9e3c4c9cae03f2d3fbdadb6abca3fd13f20',
+    'hex',
+  );
   const enc = detectEncoding(buf);
   assert.ok(enc === 'gb18030' || enc === 'gbk', `expected GBK family, got: ${enc}`);
 });

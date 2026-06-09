@@ -11,11 +11,11 @@
 - Stream large GeoJSON files to GeoJSON/KML/GPX without loading the whole file into memory.
 - Generate standard XYZ Mapbox Vector Tile (`.pbf`) directories from supported vector inputs.
 - Import vector files into PostgreSQL/PostGIS or SQL Server geometry tables, and export geometry tables back to vector files.
-- Read Shapefile DBF attributes record-by-record, including DBF files larger than 2 GiB, and decode UTF-8 Chinese field names when `.cpg` is present.
+- Read Shapefile DBF attributes record-by-record, including DBF files larger than 2 GiB, and decode Chinese field names from `.cpg` or corrected content detection when `.cpg` is mislabeled.
 - Preserve common metadata such as CRS, bbox, attributes, and parser-specific details.
 - Transform coordinates between WGS84, WebMercator, CGCS2000, GCJ-02, BD-09, and supported `EPSG:xxxx` definitions.
-- Detect common Chinese GIS text encodings from `.cpg`, TAB headers, valid UTF-8 DBF bytes, dBASE language drivers, and content heuristics.
-- Decode MapInfo TAB `WindowsSimpChinese` field names and attribute values, plus common legacy lines, point-table lines, and v300 compressed/uncompressed region coordinate blocks into GeoJSON geometries.
+- Detect common Chinese GIS text encodings from `.cpg`, TAB headers, valid UTF-8 DBF bytes, dBASE language drivers, and content heuristics; `Neutral` TAB charsets are treated as unspecified and probed from text fields.
+- Decode MapInfo TAB `WindowsSimpChinese` field names and attribute values, plus common legacy lines, v500 `0x25` point-table lines, and v300 compressed/uncompressed region coordinate blocks into GeoJSON geometries.
 
 ## Requirements
 
@@ -97,8 +97,8 @@ node dist/cli.js --help
 
 | Format | Extensions | Read | Write | Notes |
 | --- | --- | --- | --- | --- |
-| Shapefile | `.shp` + sidecars | Yes | Yes | Reads DBF attributes without one huge Buffer, supports UTF-8 Chinese field names from `.cpg`, and writes `.shp/.shx/.dbf/.cpg`; one geometry family per bundle. |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes* | Write requires GDAL `ogr2ogr`; reads TAB charsets, Chinese attributes, common legacy line records, point-table lines, and v300 compressed/uncompressed regions; unsupported private `.map` records may return `null`. |
+| Shapefile | `.shp` + sidecars | Yes | Yes | Reads DBF attributes without one huge Buffer, supports Chinese field names from `.cpg` or corrected GBK/GB18030 detection, and writes `.shp/.shx/.dbf/.cpg`; one geometry family per bundle. |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes* | Write requires GDAL `ogr2ogr`; reads TAB charsets, Chinese attributes, common legacy line records, v500 `0x25` point-table lines, and v300 compressed/uncompressed regions; unsupported private `.map` records may return `null`. |
 | GeoJSON | `.geojson`, `.json` | Yes | Yes | Streaming input and output supported. |
 | KML | `.kml` | Yes | Yes | Supports Placemark, ExtendedData, Point, LineString, Polygon, MultiGeometry. |
 | GPX | `.gpx` | Yes | Yes | Waypoints and tracks/routes; polygon output is skipped. |
@@ -268,11 +268,12 @@ test/
 - Database import auto-creates geometry tables and fails if the target table already exists; when `--table` is omitted, the input filename without extension is used as the table name.
 - Database export accepts a table name plus optional `--where`; when `-o/--output` is omitted, output defaults to `<table>.geojson`. Arbitrary SQL export is not included.
 - Derived database table names must be valid identifiers: letters/numbers/underscore, not starting with a number. Chinese letters are accepted; spaces and hyphens are rejected.
+- Encoding detection can recover mislabeled UTF-8 `.cpg` files and `Neutral` TAB headers when the original DBF/DAT bytes still contain Chinese text. Characters already replaced with literal `?` by the source exporter, or DBF field names truncated mid-character by the 11-byte dBASE name limit, cannot be reconstructed.
 - MapInfo TAB output delegates to GDAL `ogr2ogr`; install GDAL or write MapInfo MIF when `ogr2ogr` is unavailable.
 - CSV output stores geometry as WKT in a single `wkt` column.
 - GPX cannot represent polygons; polygon and multipolygon output is skipped.
 - KML parsing focuses on static Placemark geometry and does not cover dynamic display features such as NetworkLink, Region, and LOD.
-- Some MapInfo TAB `.map` private record types may produce `geometry: null`; attributes are still returned. Common legacy line and point-table records with scaled lon/lat coordinates are decoded as `LineString` or `MultiLineString`, and v300 compressed/uncompressed region coordinate blocks are decoded as `Polygon` or `MultiPolygon`.
+- Some MapInfo TAB `.map` private record types may produce `geometry: null`; attributes are still returned. Common legacy line records and v500 `0x25` point-table line records are decoded as `LineString` or `MultiLineString`, and v300 compressed/uncompressed region coordinate blocks are decoded as `Polygon` or `MultiPolygon`.
 
 ## Contributing
 

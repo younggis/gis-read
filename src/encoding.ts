@@ -112,7 +112,7 @@ function scoreBuffer(buf: Buffer, encoding: string): number {
 
   // 1. Count replacement characters (U+FFFD) — strong signal of mis-decode.
   const replacementCount = (decoded.match(/�/g) ?? []).length;
-  score -= replacementCount * 10;
+  score -= replacementCount * 8;
 
   if (validUtf8 && encoding === 'utf-8') score += 20;
   if (validUtf8 && encoding !== 'utf-8') score -= 5;
@@ -120,7 +120,7 @@ function scoreBuffer(buf: Buffer, encoding: string): number {
   // 2. CJK Unified Ideographs (U+4E00–U+9FFF) and extensions.
   const cjkRe = /[一-鿿㐀-䶿]/g;
   const cjkCount = (decoded.match(cjkRe) ?? []).length;
-  score += cjkCount * 2;
+  score += cjkCount * 3;
 
   // 3. Common GIS / Chinese terms appearing as proper text.
   const commonTerms = [
@@ -129,6 +129,8 @@ function scoreBuffer(buf: Buffer, encoding: string): number {
     '茶园', '沟', '沟水库',
     '北京市', '上海市', '广州市', '深圳市',
     '公司', '集团', '有限', '股份',
+    '地市', '区县', '线路', '名称', '分段', '高速', '收费站',
+    '隧道', '覆盖', '长度', '巴中', '巴州区',
   ];
   for (const t of commonTerms) {
     if (decoded.includes(t)) score += 3;
@@ -140,11 +142,16 @@ function scoreBuffer(buf: Buffer, encoding: string): number {
 
   // 5. Printability: control characters (excluding common whitespace) are bad.
   // eslint-disable-next-line no-control-regex
-  const controlRe = /[\x00-\x08\x0B\x0C\x0E-\x1F]/g;
+  const controlRe = /[\x01-\x08\x0B\x0C\x0E-\x1F]/g;
   score -= (decoded.match(controlRe) ?? []).length * 5;
 
   // 6. Heuristic for mojibake: e.g. "ä¸­æ–‡" sequences indicate UTF-8 read as Latin1.
   if (/[À-ÿ]{3,}/.test(decoded)) score -= 4;
+
+  // GBK/GB18030 bytes often look like halfwidth Katakana when misread as
+  // Shift-JIS. Penalize that pattern so Simplified Chinese GIS attributes do
+  // not get classified as Japanese.
+  score -= (decoded.match(/[\uFF61-\uFF9F]{2,}/g) ?? []).length * 12;
 
   // 7. Normalize by length so longer buffers don't dominate just by having more
   //    matches. We compare per-1000 characters.
@@ -158,6 +165,29 @@ function isValidUtf8(buf: Buffer): boolean {
   } catch {
     return false;
   }
+}
+
+function isCjkEncoding(encoding: string): boolean {
+  return ['gb18030', 'gbk', 'big5', 'shift_jis', 'euc-kr'].includes(encoding.toLowerCase());
+}
+
+/**
+ * Return a detected encoding when a declared hint is visibly incompatible
+ * with the sample. Good `.cpg` files stay authoritative, but common GIS
+ * bundles with `.cpg=UTF-8` and GBK DBF bytes can still be decoded.
+ */
+export function overrideBadEncodingHint(hint: string, sample: Buffer): string | null {
+  if (sample.length === 0) return null;
+  const detected = detectEncoding(sample);
+  if (detected.toLowerCase() === hint.toLowerCase()) return null;
+
+  const hintScore = scoreBuffer(sample, hint);
+  const detectedScore = scoreBuffer(sample, detected);
+  if (hint.toLowerCase() === 'utf-8' && !isValidUtf8(sample) && isCjkEncoding(detected)) {
+    return detected;
+  }
+  if (detectedScore >= hintScore + 25) return detected;
+  return null;
 }
 
 /**
