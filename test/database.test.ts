@@ -9,6 +9,9 @@ import {
   importFileToDatabase,
   inferDatabaseOutputPathFromTable,
   inferDatabaseTableNameFromPath,
+  normalizeMssqlModule,
+  resolveDatabaseGeometryColumn,
+  wrapSqlServerConnectionError,
 } from '../src/database/index.js';
 import { decodeWKB, encodeWKB } from '../src/database/wkb.js';
 import {
@@ -74,6 +77,17 @@ test('inferDatabaseColumns sanitizes names and preserves property mapping', () =
   ]);
 });
 
+test('inferDatabaseColumns avoids case-insensitive collision with internal id column', () => {
+  const columns = inferDatabaseColumns([
+    { type: 'Feature', properties: { ID: 1, Name: 'lake' }, geometry: null },
+  ]);
+
+  assert.deepEqual(columns.map((column) => [column.name, column.sourceName]), [
+    ['ID_1', 'ID'],
+    ['Name', 'Name'],
+  ]);
+});
+
 test('PostgreSQL SQL builders quote identifiers and use PostGIS WKB functions', () => {
   const table = normalizePostgresTableName('public.roads');
   const columns = inferDatabaseColumns([
@@ -102,6 +116,43 @@ test('SQL Server SQL builders quote identifiers and use geometry WKB functions',
   assert.match(createSQL, /\[geom\] geometry/);
   assert.match(insertSQL, /geometry::STGeomFromWKB\(@geom, 4326\)/);
   assert.match(insertSQL, /INSERT INTO \[dbo\]\.\[roads\]/);
+});
+
+test('normalizeMssqlModule resolves CommonJS default exports', () => {
+  const api = { connect: () => undefined, Request: class {}, Transaction: class {}, VarBinary: Symbol('varbinary') };
+  assert.equal(normalizeMssqlModule(api), api);
+  assert.equal(normalizeMssqlModule({ default: api }), api);
+  assert.throws(
+    () => normalizeMssqlModule({ default: {} }),
+    /mssql package did not expose connect/i,
+  );
+});
+
+test('wrapSqlServerConnectionError explains unsupported TLS protocol failures', () => {
+  const error = new Error('Failed to connect - ssl_choose_client_version:unsupported protocol');
+  const wrapped = wrapSqlServerConnectionError(error);
+
+  assert.equal(wrapped, error);
+  assert.match(wrapped.message, /SQL Server TLS handshake failed/i);
+  assert.match(wrapped.message, /Encrypt=false/);
+  assert.match(wrapped.message, /TLS 1\.2/);
+});
+
+test('resolveDatabaseGeometryColumn auto-detects geometry columns for export', () => {
+  assert.equal(resolveDatabaseGeometryColumn(undefined, ['Shape'], 'dbo.t_gis_county'), 'Shape');
+  assert.equal(resolveDatabaseGeometryColumn('shape', ['Shape'], 'dbo.t_gis_county'), 'Shape');
+  assert.throws(
+    () => resolveDatabaseGeometryColumn('geom', ['Shape'], 'dbo.t_gis_county'),
+    /Geometry column "geom" was not found/i,
+  );
+  assert.throws(
+    () => resolveDatabaseGeometryColumn(undefined, [], 'dbo.t_gis_county'),
+    /No geometry or geography column/i,
+  );
+  assert.throws(
+    () => resolveDatabaseGeometryColumn(undefined, ['Shape', 'Center'], 'dbo.t_gis_county'),
+    /Multiple geometry or geography columns/i,
+  );
 });
 
 test('database import infers a valid target table name from the input filename', () => {

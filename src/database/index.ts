@@ -56,6 +56,11 @@ export interface DatabaseTransferSummary {
 
 type DbRow = Record<string, unknown>;
 
+interface DatabaseReadRowsResult {
+  rows: DbRow[];
+  geomColumn: string;
+}
+
 export async function importFileToDatabase(inputPath: string, options: DatabaseImportOptions): Promise<DatabaseTransferSummary> {
   const table = options.table ?? inferDatabaseTableNameFromPath(inputPath);
   const result = parseFile(inputPath);
@@ -75,7 +80,7 @@ export async function exportDatabaseTable(options: DatabaseExportOptions): Promi
     db: options.db,
     table: options.table,
     featureCount: result.features.length,
-    geomColumn: options.geomColumn ?? 'geom',
+    geomColumn: String(result.meta?.geomColumn ?? options.geomColumn ?? 'geom'),
     outputPath,
   };
 }
@@ -94,16 +99,15 @@ export async function writeDatabaseTable(result: ParseResult, options: DatabaseI
 }
 
 export async function readDatabaseTable(options: DatabaseExportOptions): Promise<ParseResult> {
-  const geomColumn = options.geomColumn ?? 'geom';
   const connection = resolveConnection(options);
-  const rows = options.db === 'postgresql'
-    ? await readPostgresRows(connection, options.table, geomColumn, options.where)
-    : await readSqlServerRows(connection, options.table, geomColumn, options.where);
+  const result = options.db === 'postgresql'
+    ? await readPostgresRows(connection, options.table, options.geomColumn, options.where)
+    : await readSqlServerRows(connection, options.table, options.geomColumn, options.where);
   return {
     name: options.table.replace(/^.*\./, ''),
-    features: rows.map(rowToFeature),
+    features: result.rows.map(rowToFeature),
     crs: { type: 'name', properties: { name: 'EPSG:4326' } },
-    meta: { source: options.db, table: options.table, geomColumn },
+    meta: { source: options.db, table: options.table, geomColumn: result.geomColumn },
   };
 }
 
@@ -138,27 +142,36 @@ async function writePostgresTable(connection: string, tableName: string, columns
   }
 }
 
-async function readPostgresRows(connection: string, tableName: string, geomColumn: string, where?: string): Promise<DbRow[]> {
+async function readPostgresRows(connection: string, tableName: string, requestedGeomColumn?: string, where?: string): Promise<DatabaseReadRowsResult> {
   const pg = await importOptional('pg', 'PostgreSQL support requires the "pg" package. Run npm install first.');
   const client = new pg.Client({ connectionString: connection });
   const table = normalizePostgresTableName(tableName);
   await client.connect();
   try {
     const columnRows = await client.query(
-      'SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND ($2::text IS NULL OR table_schema = $2) AND column_name <> $3 ORDER BY ordinal_position',
-      [table.table, table.schema ?? null, geomColumn],
+      'SELECT column_name, udt_name FROM information_schema.columns WHERE table_name = $1 AND ($2::text IS NULL OR table_schema = $2) ORDER BY ordinal_position',
+      [table.table, table.schema ?? null],
     );
-    const columns = columnRows.rows.map((row: { column_name: string }) => row.column_name).filter((name: string) => name !== 'id');
+    const geomColumn = resolveDatabaseGeometryColumn(
+      requestedGeomColumn,
+      columnRows.rows
+        .filter((row: { udt_name: string }) => row.udt_name === 'geometry' || row.udt_name === 'geography')
+        .map((row: { column_name: string }) => row.column_name),
+      tableName,
+    );
+    const columns = columnRows.rows
+      .map((row: { column_name: string }) => row.column_name)
+      .filter((name: string) => name !== 'id' && name.toLowerCase() !== geomColumn.toLowerCase());
     const rows = await client.query(buildPostgresSelectSQL(table, columns, geomColumn, where));
-    return rows.rows;
+    return { rows: rows.rows, geomColumn };
   } finally {
     await client.end();
   }
 }
 
 async function writeSqlServerTable(connection: string, tableName: string, columns: DatabaseColumn[], geomColumn: string, srid: number, features: Feature[]): Promise<void> {
-  const mssql = await importOptional('mssql', 'SQL Server support requires the "mssql" package. Run npm install first.');
-  const pool = await mssql.connect(connection);
+  const mssql = normalizeMssqlModule(await importOptional('mssql', 'SQL Server support requires the "mssql" package. Run npm install first.'));
+  const pool = await connectSqlServer(mssql, connection);
   const table = normalizeSqlServerTableName(tableName);
   const transaction = new mssql.Transaction(pool);
   await transaction.begin();
@@ -180,19 +193,27 @@ async function writeSqlServerTable(connection: string, tableName: string, column
   }
 }
 
-async function readSqlServerRows(connection: string, tableName: string, geomColumn: string, where?: string): Promise<DbRow[]> {
-  const mssql = await importOptional('mssql', 'SQL Server support requires the "mssql" package. Run npm install first.');
-  const pool = await mssql.connect(connection);
+async function readSqlServerRows(connection: string, tableName: string, requestedGeomColumn?: string, where?: string): Promise<DatabaseReadRowsResult> {
+  const mssql = normalizeMssqlModule(await importOptional('mssql', 'SQL Server support requires the "mssql" package. Run npm install first.'));
+  const pool = await connectSqlServer(mssql, connection);
   const table = normalizeSqlServerTableName(tableName);
   try {
     const columnsResult = await pool.request()
       .input('table', table.table)
       .input('schema', table.schema ?? 'dbo')
-      .input('geom', geomColumn)
-      .query('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @table AND TABLE_SCHEMA = @schema AND COLUMN_NAME <> @geom ORDER BY ORDINAL_POSITION');
-    const columns = columnsResult.recordset.map((row: { COLUMN_NAME: string }) => row.COLUMN_NAME).filter((name: string) => name !== 'id');
+      .query('SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @table AND TABLE_SCHEMA = @schema ORDER BY ORDINAL_POSITION');
+    const geomColumn = resolveDatabaseGeometryColumn(
+      requestedGeomColumn,
+      columnsResult.recordset
+        .filter((row: { DATA_TYPE: string }) => row.DATA_TYPE === 'geometry' || row.DATA_TYPE === 'geography')
+        .map((row: { COLUMN_NAME: string }) => row.COLUMN_NAME),
+      tableName,
+    );
+    const columns = columnsResult.recordset
+      .map((row: { COLUMN_NAME: string }) => row.COLUMN_NAME)
+      .filter((name: string) => name !== 'id' && name.toLowerCase() !== geomColumn.toLowerCase());
     const result = await pool.request().query(buildSqlServerSelectSQL(table, columns, geomColumn, where));
-    return result.recordset;
+    return { rows: result.recordset, geomColumn };
   } finally {
     await pool.close();
   }
@@ -205,6 +226,45 @@ async function importOptional(name: string, message: string): Promise<any> {
     if ((error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND') throw new Error(message);
     throw error;
   }
+}
+
+export function normalizeMssqlModule(moduleValue: any): any {
+  const candidate = typeof moduleValue?.connect === 'function'
+    ? moduleValue
+    : typeof moduleValue?.default?.connect === 'function'
+      ? moduleValue.default
+      : typeof moduleValue?.['module.exports']?.connect === 'function'
+        ? moduleValue['module.exports']
+        : null;
+  if (!candidate) throw new Error('mssql package did not expose connect().');
+  return candidate;
+}
+
+async function connectSqlServer(mssql: any, connection: string): Promise<any> {
+  try {
+    return await mssql.connect(connection);
+  } catch (error) {
+    throw wrapSqlServerConnectionError(error);
+  }
+}
+
+export function wrapSqlServerConnectionError(error: unknown): Error {
+  if (!(error instanceof Error)) return new Error(String(error));
+  if (/ssl_choose_client_version|unsupported protocol/i.test(error.message)) {
+    error.message = `${error.message}\nSQL Server TLS handshake failed. If this is an older SQL Server that does not support the TLS version required by Node.js, either enable TLS 1.2 on the server or add Encrypt=false to the SQL Server connection string for a trusted internal network.`;
+  }
+  return error;
+}
+
+export function resolveDatabaseGeometryColumn(requested: string | undefined, candidates: string[], tableName: string): string {
+  if (requested) {
+    const match = candidates.find((column) => column.toLowerCase() === requested.toLowerCase());
+    if (match) return match;
+    throw new Error(`Geometry column "${requested}" was not found in ${tableName}. Available geometry/geography columns: ${candidates.join(', ') || '(none)'}.`);
+  }
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length === 0) throw new Error(`No geometry or geography column found in ${tableName}. Pass --geom-column if the spatial column uses an unsupported database type.`);
+  throw new Error(`Multiple geometry or geography columns found in ${tableName}: ${candidates.join(', ')}. Pass --geom-column <name> to choose one.`);
 }
 
 function cloneFeatures(features: Feature[]): Feature[] {

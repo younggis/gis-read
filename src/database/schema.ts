@@ -22,11 +22,11 @@ export function inferDatabaseColumns(features: Feature[]): DatabaseColumn[] {
     const base = sanitizeIdentifier(sourceName);
     let name = base;
     let index = 1;
-    while (seen.has(name)) {
+    while (seen.has(name.toLowerCase())) {
       name = `${base}_${index}`;
       index++;
     }
-    seen.add(name);
+    seen.add(name.toLowerCase());
     columns.push({ name, sourceName, type: inferColumnType(features, sourceName) });
   }
   return columns;
