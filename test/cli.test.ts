@@ -348,3 +348,68 @@ test('db-export command requires a database connection', async () => {
     /connection/i,
   );
 });
+
+// ---------------------------------------------------------------------------
+// GeoPackage CLI Tests
+// ---------------------------------------------------------------------------
+
+import { parseGeoPackage, writeGeoPackage } from '../src/parsers/geopackage.js';
+
+const GPKG = path.join('data', 'lakes.gpkg');
+
+function ensureGpkgFixture(): boolean {
+  if (fs.existsSync(GPKG)) return true;
+  const geojson = parseGeoJSON(fs.readFileSync(path.join('data', 'lakes.geojson')));
+  writeGeoPackage(geojson, { outputPath: GPKG });
+  return true;
+}
+
+test('info command shows GeoPackage layers', async () => {
+  if (!ensureGpkgFixture()) return;
+  const { stdout } = await runCli(['info', GPKG, '--log-level', 'silent']);
+  assert.ok(stdout.includes('Layers:'), 'should show layer count');
+  assert.ok(stdout.includes('lakes'), 'should show layer name');
+});
+
+test('info command with --layer shows specific layer', async () => {
+  if (!ensureGpkgFixture()) return;
+  const { stdout } = await runCli(['info', GPKG, '--layer', 'lakes', '--log-level', 'silent']);
+  assert.ok(stdout.includes('Features:  1225'), 'should show 1225 features');
+});
+
+test('convert command exports GeoPackage to GeoJSON', async () => {
+  if (!ensureGpkgFixture()) return;
+  const dir = tempDir();
+  const output = path.join(dir, 'lakes.geojson');
+  await runCli(['convert', GPKG, '-o', output, '--log-level', 'silent']);
+  assert.ok(fs.existsSync(output), 'output file should exist');
+  const r = parseGeoJSON(fs.readFileSync(output));
+  assert.equal(r.features.length, 1225);
+});
+
+test('convert command exports GeoPackage with --layer', async () => {
+  if (!ensureGpkgFixture()) return;
+  const dir = tempDir();
+  const output = path.join(dir, 'lakes_layer.geojson');
+  await runCli(['convert', GPKG, '-o', output, '--layer', 'lakes', '--log-level', 'silent']);
+  assert.ok(fs.existsSync(output), 'output file should exist');
+  const r = parseGeoJSON(fs.readFileSync(output));
+  assert.equal(r.features.length, 1225);
+});
+
+test('convert command writes GeoPackage from GeoJSON input', async () => {
+  if (!ensureGpkgFixture()) return;
+  const dir = tempDir();
+  const input = path.join('data', 'lakes.geojson');
+  const output = path.join(dir, 'output.gpkg');
+  await runCli(['convert', input, '-o', output, '--log-level', 'silent']);
+  assert.ok(fs.existsSync(output), 'output gpkg should exist');
+  const r = parseGeoPackage(output);
+  assert.equal(r.features.length, 1225);
+});
+
+test('detect command returns geopackage for .gpkg file', async () => {
+  if (!ensureGpkgFixture()) return;
+  const { stdout } = await runCli(['detect', GPKG, '--log-level', 'silent']);
+  assert.ok(stdout.trim().includes('geopackage'), `got: ${stdout}`);
+});

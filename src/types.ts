@@ -61,6 +61,8 @@ export interface ParseOptions {
   bbox?: BBox;
   /** Property names to include (others dropped). */
   propertyFilter?: string[];
+  /** Layer name for multi-layer formats (GeoPackage, TopoJSON). */
+  layer?: string;
 }
 
 /** Options controlling the writer. */

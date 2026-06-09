@@ -34,6 +34,8 @@ import {
   exportDatabaseTable,
   parseGeoJSONStream,
   formatKMLPlacemarkLines,
+  parseGeoPackageLayers,
+  listGeoPackageLayers,
   type Format,
   type DatabaseKind,
 } from './parsers/index.js';
@@ -41,12 +43,12 @@ import { formatBytes, formatDuration, withErrorBoundary, readTextFile } from './
 import { getCRS, transformFeatures, transformGeometry, normalizeId } from './crs.js';
 import { log, Logger, type LogLevel } from './logger.js';
 
-const VERSION = '1.0.4';
+const VERSION = '1.0.7';
 
 const program = new Command();
 program
   .name('gis')
-  .description('GIS data parser and converter (Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV, ESRI JSON, MIF) with multi-CRS support and streaming for large files')
+  .description('GIS data parser and converter (Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV, ESRI JSON, MIF, GeoPackage) with multi-CRS support and streaming for large files')
   .version(VERSION)
   .addOption(new Option('--log-level <level>', 'logging verbosity').choices(['debug', 'info', 'warn', 'error', 'silent']).default('info'))
   .option('--log-file <path>', 'append log lines to this file')
@@ -60,14 +62,37 @@ program
   .command('info')
   .argument('<file>', 'input file')
   .option('-f, --format <format>', 'force format')
-  .action((file: string, opts: { format?: Format }) => {
+  .option('-l, --layer <name>', 'specific layer name (for multi-layer formats)')
+  .action((file: string, opts: { format?: Format; layer?: string }) => {
     const fmt = (opts.format as Format) ?? detectFormat(file);
     const stat = fs.statSync(file);
     log.info(`File: ${path.resolve(file)}`);
     console.log(`File:      ${path.resolve(file)}`);
     console.log(`Size:      ${formatBytes(stat.size)}`);
     console.log(`Format:    ${fmt}`);
-    const result = parseFile(file, fmt as Format);
+
+    // For GeoPackage, list all layers first
+    if (fmt === 'geopackage' && !opts.layer) {
+      const layerNames = listGeoPackageLayers(file);
+      console.log(`Layers:    ${layerNames.length} (${layerNames.join(', ')})`);
+      // Parse all layers
+      const results = parseGeoPackageLayers(file);
+      let totalFeatures = 0;
+      for (const r of results) {
+        console.log(`  ${r.name}: ${r.features.length} features`);
+        totalFeatures += r.features.length;
+      }
+      console.log(`Features:  ${totalFeatures} (total)`);
+      if (results.length > 0 && results[0].crs) {
+        console.log(`CRS:       ${results[0].crs.properties.name ?? '(unknown)'}`);
+      }
+      if (results.length > 0 && results[0].bbox) {
+        console.log(`BBox:      ${results[0].bbox.join(', ')}`);
+      }
+      return;
+    }
+
+    const result = parseFile(file, fmt as Format, opts.layer ? { layer: opts.layer } : {});
     console.log(`Name:      ${result.name ?? '(none)'}`);
     console.log(`Features:  ${result.features.length}`);
     if (result.crs) console.log(`CRS:       ${result.crs.properties.name ?? '(unknown)'}`);
@@ -92,10 +117,13 @@ program
   .argument('<file>', 'input file')
   .option('-f, --format <format>', 'force format')
   .option('-l, --limit <n>', 'max features to print', (v) => Number(v), 0)
+  .option('--layer <name>', 'specific layer name (for multi-layer formats)')
   .option('--no-pretty', 'single-line JSON output')
-  .action((file: string, opts: { format?: Format; limit: number; pretty: boolean }) => {
+  .action((file: string, opts: { format?: Format; limit: number; pretty: boolean; layer?: string }) => {
     const fmt = (opts.format as Format) ?? detectFormat(file);
-    const result = parseFile(file, fmt as Format, { limit: opts.limit });
+    const parseOpts: any = { limit: opts.limit };
+    if (opts.layer) parseOpts.layer = opts.layer;
+    const result = parseFile(file, fmt as Format, parseOpts);
     const features = opts.limit > 0 ? result.features.slice(0, opts.limit) : result.features;
     const trimmed = { ...result, features };
     process.stdout.write(JSON.stringify(trimmed, null, opts.pretty ? 2 : undefined));
@@ -111,10 +139,11 @@ program
   .option('--from-crs <crs>', 'source CRS for re-projection')
   .option('--to-crs <crs>', 'target CRS for re-projection')
   .option('--precision <n>', 'coordinate decimal precision', (v) => Number(v), 6)
+  .option('--layer <name>', 'specific layer name (for multi-layer formats like GeoPackage)')
   .option('--stream', 'use streaming mode (lower memory, GeoJSON in only)')
   .action(async (
     input: string,
-    opts: { output: string; from?: Format; to?: Format; fromCrs?: string; toCrs?: string; precision: number; stream?: boolean },
+    opts: { output: string; from?: Format; to?: Format; fromCrs?: string; toCrs?: string; precision: number; stream?: boolean; layer?: string },
   ) => {
     const from = (opts.from as Format) ?? detectFormat(input);
     const to = (opts.to as Format) ?? detectFormat(opts.output);
@@ -185,8 +214,49 @@ program
       return;
     }
 
-    // In-memory path.
-    const result = parseFile(input, from as Format);
+    // Multi-layer GeoPackage handling: when input is GeoPackage and no --layer specified,
+    // export each layer to a separate file.
+    if (from === 'geopackage' && !opts.layer) {
+      const layers = parseGeoPackageLayers(input);
+      if (layers.length <= 1) {
+        // Single layer: normal path
+        const result = layers[0] ?? parseFile(input, from);
+        reProject(result.features as any);
+        fs.mkdirSync(path.dirname(path.resolve(opts.output)), { recursive: true });
+        writeFile(result, opts.output, to as Format, { precision: opts.precision });
+        done(`Converted ${from} -> ${to}`, {
+          features: result.features.length,
+          input,
+          output: path.resolve(opts.output),
+        });
+      } else {
+        // Multiple layers: export each to a separate file
+        const ext = path.extname(opts.output);
+        const base = opts.output.slice(0, -ext.length);
+        let totalFeatures = 0;
+        for (const layerResult of layers) {
+          const layerName = layerResult.name ?? 'layer';
+          const layerOutput = `${base}_${layerName}${ext}`;
+          reProject(layerResult.features as any);
+          fs.mkdirSync(path.dirname(path.resolve(layerOutput)), { recursive: true });
+          writeFile(layerResult, layerOutput, to as Format, { precision: opts.precision });
+          log.info(`  ${layerName}: ${layerResult.features.length} features -> ${path.resolve(layerOutput)}`);
+          totalFeatures += layerResult.features.length;
+        }
+        done(`Converted ${from} -> ${to} (${layers.length} layers)`, {
+          features: totalFeatures,
+          input,
+          output: path.resolve(opts.output),
+          layers: layers.length,
+        });
+      }
+      return;
+    }
+
+    // In-memory path (single layer).
+    const parseOpts: any = {};
+    if (opts.layer) parseOpts.layer = opts.layer;
+    const result = parseFile(input, from as Format, parseOpts);
     reProject(result.features as any);
 
     fs.mkdirSync(path.dirname(path.resolve(opts.output)), { recursive: true });

@@ -1,6 +1,6 @@
 # gis-read
 
-当前版本：`1.0.6`
+当前版本：`1.0.7`
 
 中文 | [English](./README.md)
 
@@ -8,8 +8,8 @@
 
 ## 功能特性
 
-- 解析 Shapefile、MapInfo TAB、GeoJSON、KML、GPX、TopoJSON、CZML、CSV/WKT、ESRI JSON、MapInfo MIF。
-- 支持把输入格式转换为 GeoJSON、KML、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF。MapInfo TAB 写出依赖本机安装 GDAL `ogr2ogr`。
+- 解析 Shapefile、MapInfo TAB、GeoJSON、KML、GPX、TopoJSON、CZML、CSV/WKT、ESRI JSON、MapInfo MIF、GeoPackage。
+- 支持把输入格式转换为 GeoJSON、KML、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF、GeoPackage。MapInfo TAB 写出依赖本机安装 GDAL `ogr2ogr`。
 - 支持大 GeoJSON 流式转换到 GeoJSON/KML/GPX，避免一次性加载完整文件。
 - 支持从现有输入格式生成标准 XYZ Mapbox Vector Tile (`.pbf`) 矢量切片目录。
 - 支持把矢量文件导入 PostgreSQL/PostGIS 或 SQL Server geometry 表，也支持把数据库空间表导出为矢量文件。
@@ -36,7 +36,7 @@ gis --help
 从本地 tarball 安装：
 
 ```bash
-npm install -g ./gis-read-1.0.6.tgz
+npm install -g ./gis-read-1.0.7.tgz
 gis --help
 ```
 
@@ -67,6 +67,12 @@ gis convert input.geojson -o output.csv
 gis convert points.geojson -o points.shp -t shapefile
 gis convert input.geojson -o output.mif
 gis convert input.geojson -o output.tab -t tab # 需要 GDAL ogr2ogr
+
+# GeoPackage（多图层支持）
+gis info input.gpkg                          # 查看所有图层
+gis convert input.gpkg -o output.geojson     # 导出所有图层（每图层一个文件）
+gis convert input.gpkg -o output.geojson --layer roads  # 导出指定图层
+gis convert input.geojson -o output.gpkg     # 写出 GeoPackage
 
 # 生成 MVT/PBF 矢量切片
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
@@ -109,6 +115,7 @@ node dist/cli.js --help
 | CSV/WKT | `.csv` | 是 | 是 | 写出属性列和 `wkt` 几何列。 |
 | ESRI JSON | `.json` | 是 | 是 | 读取/写出 ArcGIS 风格几何结构。 |
 | MapInfo MIF | `.mif` + `.mid` | 是 | 是 | 写出文本 `.mif` 和属性 `.mid`。 |
+| GeoPackage | `.gpkg` | 是 | 是 | 支持多图层；使用 `--layer` 选择指定图层，不指定时每个图层自动导出为单独文件。也支持读取 SpatiaLite `.sqlite` 文件。 |
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | 否 | 是 | 通过 `gis tile` 生成，输入几何会统一转为 WebMercator。 |
 | PostgreSQL/PostGIS | geometry 表 | 是 | 是 | 通过 `ST_AsBinary` / `ST_GeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_PG_CONNECTION`。 |
 | SQL Server | geometry 表 | 是 | 是 | 通过 `STAsBinary()` / `geometry::STGeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_MSSQL_CONNECTION`。 |
@@ -131,6 +138,10 @@ import {
   importFileToDatabase,
   exportDatabaseTable,
   transformFeatures,
+  parseGeoPackage,
+  parseGeoPackageLayers,
+  writeGeoPackage,
+  listGeoPackageLayers,
 } from 'gis-read';
 
 const parsed = parseFile('input.shp');
@@ -168,6 +179,16 @@ await exportDatabaseTable({
   table: 'dbo.roads',
   outputPath: 'roads.geojson', // 可选；省略时使用 <table>.geojson
 });
+
+// GeoPackage：列出图层并读取指定图层
+const layers = listGeoPackageLayers('input.gpkg');
+console.log('图层:', layers);
+
+const gpkg = parseGeoPackage('input.gpkg', { layer: 'roads' });
+console.log(gpkg.features.length);
+
+// GeoPackage：写出
+writeGeoPackage(parsed, { outputPath: 'output.gpkg' });
 ```
 
 流式读取 GeoJSON：
@@ -277,6 +298,7 @@ test/
 - CSV 写出会把几何保存为单个 `wkt` 列。
 - GPX 不能表达面几何，Polygon / MultiPolygon 输出会被跳过。
 - KML 解析聚焦静态 Placemark 几何，不覆盖 NetworkLink、Region、LOD 等动态显示特性。
+- GeoPackage 读取通过 sql.js（WASM）将整个文件加载到内存，超大文件可能占用较多 RAM。建议使用 `--layer` 按图层处理。每个 Feature 会添加 `_layer` 属性标记来源表名。
 - 部分 MapInfo TAB `.map` 私有 record 类型可能返回 `geometry: null`，但属性仍会返回；常见 legacy 线对象和 v500 `0x25` 点表线对象会解析为 `LineString` 或 `MultiLineString`，v300 压缩/未压缩 Region 坐标块会解析为 `Polygon` 或 `MultiPolygon`。
 
 ## 贡献
