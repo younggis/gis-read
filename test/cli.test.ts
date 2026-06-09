@@ -24,6 +24,12 @@ import { parseShapefile } from '../src/parsers/shapefile.js';
 const execFileAsync = promisify(execFile);
 
 const SOURCE_CLI = path.resolve('src/cli.ts');
+const GRID_ROAD_TAB = path.join('data', '网格内道路图层.TAB');
+const JN_REGION_TAB = path.join('data', 'JN-36-01.TAB');
+
+function skipIfMissing(filePath: string): false | string {
+  return fs.existsSync(filePath) ? false : `fixture missing: ${filePath}`;
+}
 
 async function runCli(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<{ stdout: string; stderr: string }> {
   const result = await execFileAsync(process.execPath, ['--import', 'tsx', SOURCE_CLI, ...args], {
@@ -217,11 +223,11 @@ test('convert command decodes Chinese TAB fields, values, and legacy line geomet
   assert.ok(geometries.length > 0, 'converted TAB should include line geometries');
 });
 
-test('convert command preserves grid road TAB line geometry', async () => {
+test('convert command preserves grid road TAB line geometry', { skip: skipIfMissing(GRID_ROAD_TAB) }, async () => {
   const dir = tempDir();
   const output = path.join(dir, 'grid-road.geojson');
 
-  await runCli(['convert', path.join('data', '网格内道路图层.TAB'), '-o', output, '-t', 'geojson', '--log-level', 'silent']);
+  await runCli(['convert', GRID_ROAD_TAB, '-o', output, '-t', 'geojson', '--log-level', 'silent']);
 
   const parsed = parseGeoJSON(fs.readFileSync(output));
   assert.equal(parsed.features.length, 28);
@@ -230,11 +236,11 @@ test('convert command preserves grid road TAB line geometry', async () => {
   assert.ok(geometries.every((g) => g?.type === 'LineString' || g?.type === 'MultiLineString'));
 });
 
-test('convert command preserves JN TAB region geometry', async () => {
+test('convert command preserves JN TAB region geometry', { skip: skipIfMissing(JN_REGION_TAB) }, async () => {
   const dir = tempDir();
   const output = path.join(dir, 'jn-region.geojson');
 
-  await runCli(['convert', path.join('data', 'JN-36-01.TAB'), '-o', output, '-t', 'geojson', '--log-level', 'silent']);
+  await runCli(['convert', JN_REGION_TAB, '-o', output, '-t', 'geojson', '--log-level', 'silent']);
 
   const parsed = parseGeoJSON(fs.readFileSync(output));
   assert.equal(parsed.features.length, 1);
@@ -315,5 +321,30 @@ test('tile command rejects invalid zoom range', async () => {
   await assert.rejects(
     runCli(['tile', input, '-o', output, '--min-zoom', '3', '--max-zoom', '2', '--log-level', 'error']),
     /min-zoom/i,
+  );
+});
+
+test('db-import command requires a database connection', async () => {
+  const dir = tempDir();
+  const input = writeFixture(dir, 'roads.geojson');
+
+  await assert.rejects(
+    runCli(['db-import', input, '--db', 'postgresql', '--log-level', 'error'], {
+      ...process.env,
+      GIS_READ_PG_CONNECTION: '',
+      GIS_READ_MSSQL_CONNECTION: '',
+    }),
+    /connection/i,
+  );
+});
+
+test('db-export command requires a database connection', async () => {
+  await assert.rejects(
+    runCli(['db-export', '--db', 'sqlserver', '--table', 'dbo.roads', '--log-level', 'error'], {
+      ...process.env,
+      GIS_READ_PG_CONNECTION: '',
+      GIS_READ_MSSQL_CONNECTION: '',
+    }),
+    /connection/i,
   );
 });

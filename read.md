@@ -1,6 +1,6 @@
 # gis-read
 
-当前版本：`1.0.4`
+当前版本：`1.0.5`
 
 中文 | [English](./README.md)
 
@@ -12,11 +12,12 @@
 - 支持把输入格式转换为 GeoJSON、KML、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF。MapInfo TAB 写出依赖本机安装 GDAL `ogr2ogr`。
 - 支持大 GeoJSON 流式转换到 GeoJSON/KML/GPX，避免一次性加载完整文件。
 - 支持从现有输入格式生成标准 XYZ Mapbox Vector Tile (`.pbf`) 矢量切片目录。
+- 支持把矢量文件导入 PostgreSQL/PostGIS 或 SQL Server geometry 表，也支持把数据库空间表导出为矢量文件。
 - Shapefile 的 DBF 属性表按记录读取，支持超过 2 GiB 的 DBF 文件，并会按 `.cpg` 解码 UTF-8 中文字段名。
 - 保留常见元数据，例如 CRS、bbox、属性字段和格式相关 meta。
 - 支持 WGS84、WebMercator、CGCS2000、GCJ-02、BD-09，以及 `EPSG:xxxx` 坐标转换。
 - 自动识别常见中文 GIS 字段编码，包括 `.cpg`、TAB 头、合法 UTF-8 DBF 字节、dBASE language driver 和内容启发式探测。
-- 支持 MapInfo TAB `WindowsSimpChinese` 字段名和属性值解码，并可读取常见 legacy 线对象、点表线对象和 `0x0D` 面对象几何。
+- 支持 MapInfo TAB `WindowsSimpChinese` 字段名和属性值解码，并可读取常见 legacy 线对象、点表线对象，以及 v300 压缩/未压缩 Region 坐标块几何。
 
 ## 环境要求
 
@@ -35,7 +36,7 @@ gis --help
 从本地 tarball 安装：
 
 ```bash
-npm install -g ./gis-read-1.0.4.tgz
+npm install -g ./gis-read-1.0.5.tgz
 gis --help
 ```
 
@@ -71,6 +72,12 @@ gis convert input.geojson -o output.tab -t tab # 需要 GDAL ogr2ogr
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
 gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 
+# 数据库空间表导入/导出
+gis db-import roads.shp --db postgresql --connection "$POSTGIS_URL" --srid 4326
+gis db-import input.shp --db postgresql --connection "$POSTGIS_URL" --table public.roads --srid 4326
+gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads --geom-column geom
+gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads -o roads.shp -t shapefile
+
 # 大 GeoJSON 流式转换
 gis stream big.geojson -o big.kml
 gis convert big.geojson -o big.geojson --stream
@@ -93,7 +100,7 @@ node dist/cli.js --help
 | 格式 | 扩展名 | 读取 | 写出 | 说明 |
 | --- | --- | --- | --- | --- |
 | Shapefile | `.shp` + sidecars | 是 | 是 | DBF 属性不再一次性读入单个 Buffer，支持 `.cpg` 中声明的 UTF-8 中文字段名；写出 `.shp/.shx/.dbf/.cpg`，每个 bundle 只能包含一种几何族。 |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是* | 写出需要 GDAL `ogr2ogr`；支持 TAB 字符集、中文属性值、常见 legacy 线对象、点表线对象和 `0x0D` 面对象读取，部分私有 `.map` 记录仍可能返回 `null`。 |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是* | 写出需要 GDAL `ogr2ogr`；支持 TAB 字符集、中文属性值、常见 legacy 线对象、点表线对象和 v300 压缩/未压缩 Region 坐标块读取，部分私有 `.map` 记录仍可能返回 `null`。 |
 | GeoJSON | `.geojson`, `.json` | 是 | 是 | 支持流式输入和输出。 |
 | KML | `.kml` | 是 | 是 | 支持 Placemark、ExtendedData、Point、LineString、Polygon、MultiGeometry。 |
 | GPX | `.gpx` | 是 | 是 | 支持 waypoint 和 track/route；Polygon 输出会被跳过。 |
@@ -103,6 +110,8 @@ node dist/cli.js --help
 | ESRI JSON | `.json` | 是 | 是 | 读取/写出 ArcGIS 风格几何结构。 |
 | MapInfo MIF | `.mif` + `.mid` | 是 | 是 | 写出文本 `.mif` 和属性 `.mid`。 |
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | 否 | 是 | 通过 `gis tile` 生成，输入几何会统一转为 WebMercator。 |
+| PostgreSQL/PostGIS | geometry 表 | 是 | 是 | 通过 `ST_AsBinary` / `ST_GeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_PG_CONNECTION`。 |
+| SQL Server | geometry 表 | 是 | 是 | 通过 `STAsBinary()` / `geometry::STGeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_MSSQL_CONNECTION`。 |
 
 ## Node.js 库用法
 
@@ -119,6 +128,8 @@ import {
   writeFile,
   tileFile,
   writeVectorTiles,
+  importFileToDatabase,
+  exportDatabaseTable,
   transformFeatures,
 } from 'gis-read';
 
@@ -142,6 +153,20 @@ await tileFile('input.shp', {
   fromCrs: 'WGS84',
   threads: 4,
   layerName: 'buildings',
+});
+
+await importFileToDatabase('input.shp', {
+  db: 'postgresql',
+  connection: process.env.GIS_READ_PG_CONNECTION,
+  table: 'public.roads', // 可选；省略时使用输入文件名去掉扩展名
+  srid: 4326,
+});
+
+await exportDatabaseTable({
+  db: 'sqlserver',
+  connection: process.env.GIS_READ_MSSQL_CONNECTION,
+  table: 'dbo.roads',
+  outputPath: 'roads.geojson', // 可选；省略时使用 <table>.geojson
 });
 ```
 
@@ -191,7 +216,7 @@ npm start -- info input.geojson
 npm pack
 ```
 
-测试覆盖 parser 行为、CLI 转换行为、矢量切片生成、GeoJSON 流式处理、CRS 转换、编码检测和错误边界。
+测试覆盖 parser 行为、CLI 转换行为、矢量切片生成、数据库 SQL/WKB 行为、GeoJSON 流式处理、CRS 转换、编码检测和错误边界。设置 `GIS_READ_TEST_PG_CONNECTION` 后会额外运行真实 PostGIS 集成测试。
 
 ## 打包
 
@@ -242,11 +267,14 @@ test/
 - Shapefile DBF 读取已绕开 Node 单个 Buffer 的 2 GiB 限制，但普通 `parse` 和 `convert` 仍会把返回的 features 放入内存。处理超大数据前建议先用 `gis parse input.shp --limit 10` 检查。
 - 矢量切片当前只输出 XYZ `.pbf` 目录，不包含 MBTiles 或 GeoJSON tiles。
 - 矢量切片会先把输入 features 解析到内存，再按 `--threads` 使用 worker 线程并行编码切片。
+- 数据库导入会自动创建 geometry 表；如果目标表已存在会报错。省略 `--table` 时，默认使用输入文件名去掉扩展名作为表名；暂不支持 append/overwrite 或 geography 列。
+- 数据库导出支持表名和可选 `--where`。省略 `-o/--output` 时，默认写出 `<table>.geojson`；暂不支持任意 SQL 查询导出。
+- 自动推导的数据库表名必须是合法标识符：可包含字母、数字、下划线，不能以数字开头；支持中文名，不支持空格和连字符。
 - MapInfo TAB 写出委托给 GDAL `ogr2ogr`；未安装 GDAL 时请改写 MapInfo MIF。
 - CSV 写出会把几何保存为单个 `wkt` 列。
 - GPX 不能表达面几何，Polygon / MultiPolygon 输出会被跳过。
 - KML 解析聚焦静态 Placemark 几何，不覆盖 NetworkLink、Region、LOD 等动态显示特性。
-- 部分 MapInfo TAB `.map` 私有 record 类型可能返回 `geometry: null`，但属性仍会返回；常见 legacy 线对象和点表线对象会解析为 `LineString` 或 `MultiLineString`，常见 `0x0D` legacy region 点表会解析为 `Polygon`。
+- 部分 MapInfo TAB `.map` 私有 record 类型可能返回 `geometry: null`，但属性仍会返回；常见 legacy 线对象和点表线对象会解析为 `LineString` 或 `MultiLineString`，v300 压缩/未压缩 Region 坐标块会解析为 `Polygon` 或 `MultiPolygon`。
 
 ## 贡献
 
@@ -267,7 +295,7 @@ PR 描述中请说明影响的格式或 CLI 行为；如果行为变化明显，
 
 ## MapInfo TAB 几何兼容说明
 
-当前版本支持读取常见 MapInfo TAB legacy 线对象、点表线对象，以及常见 `0x0D` legacy region 点表记录。线对象会输出为 `LineString` / `MultiLineString`，`0x0D` region 会输出为 `Polygon`。少数未识别的私有 `.map` record 仍可能返回 `geometry: null`，但属性字段会继续保留。
+当前版本支持读取常见 MapInfo TAB legacy 线对象、点表线对象，以及 v300 压缩/未压缩 Region 坐标块记录。线对象会输出为 `LineString` / `MultiLineString`，Region 会输出为 `Polygon` / `MultiPolygon`。少数未识别的私有 `.map` record 仍可能返回 `geometry: null`，但属性字段会继续保留。
 
 ## License
 

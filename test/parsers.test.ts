@@ -47,15 +47,47 @@ import {
   driverToEncoding,
 } from '../src/encoding.js';
 import type { Feature } from '../src/types.js';
+import type { Geometry } from '../src/types.js';
 
 const DATA = path.resolve('data');
 const GEOJSON = path.join(DATA, 'lakes.geojson');
 const KML = path.join(DATA, 'lakes.kml');
 const SHP = path.join(DATA, 'lakes.shp');
 const TAB = path.join(DATA, 'lakes.tab');
+const UNTITLED_REGION_SHP = path.join(DATA, 'Untitled_region.shp');
+const GRID_ROAD_TAB = path.join(DATA, '网格内道路图层.TAB');
+const JN_REGION_TAB = path.join(DATA, 'JN-36-01.TAB');
+
+function skipIfMissing(filePath: string): false | string {
+  return fs.existsSync(filePath) ? false : `fixture missing: ${filePath}`;
+}
 
 function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'gis-read-parser-'));
+}
+
+function geometryBBox(geometry: Geometry | null | undefined): [number, number, number, number] | null {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const visit = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    if (typeof value[0] === 'number' && typeof value[1] === 'number') {
+      xs.push(value[0]);
+      ys.push(value[1]);
+      return;
+    }
+    for (const item of value) visit(item);
+  };
+  visit((geometry as { coordinates?: unknown } | null | undefined)?.coordinates);
+  return xs.length > 0
+    ? [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
+    : null;
+}
+
+function assertBBoxClose(actual: [number, number, number, number], expected: [number, number, number, number], tolerance = 1e-6): void {
+  for (let i = 0; i < 4; i++) {
+    assert.ok(Math.abs(actual[i] - expected[i]) <= tolerance, `bbox[${i}] expected ${expected[i]}, got ${actual[i]}`);
+  }
 }
 
 function writeWindowsSimpChineseTABBundle(dir: string): string {
@@ -253,8 +285,8 @@ test('parseShapefile reads shp + dbf with attributes and polygon geometry', () =
   assert.ok(r.bbox![1] < r.bbox![3]);
 });
 
-test('parseShapefile detects UTF-8 attributes when .cpg is missing', () => {
-  const r = parseShapefile(path.join(DATA, 'Untitled_region.shp'));
+test('parseShapefile detects UTF-8 attributes when .cpg is missing', { skip: skipIfMissing(UNTITLED_REGION_SHP) }, () => {
+  const r = parseShapefile(UNTITLED_REGION_SHP);
   assert.equal(r.features.length, 1);
   assert.match(String(r.meta?.encoding), /utf-8 \(detected\)/i);
   assert.equal(r.features[0].properties.name, '扎科乡');
@@ -294,6 +326,19 @@ test('parseTAB reads .tab + .dat attributes (geometry best-effort)', () => {
   assert.equal(r.meta?.fieldCount, 8);
 });
 
+test('parseTAB reads v300 region geometries with correct coordinates', () => {
+  const tab = parseTAB(TAB);
+  const shp = parseShapefile(SHP);
+  const firstTabBBox = geometryBBox(tab.features[0].geometry);
+  const firstShpBBox = geometryBBox(shp.features[0].geometry);
+
+  assert.ok(firstTabBBox, 'first TAB feature should include geometry');
+  assert.ok(firstShpBBox, 'first SHP feature should include geometry');
+  assert.equal(tab.features.slice(0, 50).filter((f) => f.geometry).length, 50);
+  assert.ok(tab.features.slice(0, 50).every((f) => f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon'));
+  assertBBoxClose(firstTabBBox, firstShpBBox);
+});
+
 test('parseTAB decodes WindowsSimpChinese field names, attribute values, and legacy line geometries', () => {
   const r = parseTAB(writeWindowsSimpChineseTABBundle(tempDir()));
   assert.equal(r.features.length, 1);
@@ -313,8 +358,8 @@ test('parseTAB decodes WindowsSimpChinese field names, attribute values, and leg
   assert.ok(firstCoord[1] > 30 && firstCoord[1] < 31, 'line latitude should decode from scaled MAP coordinates');
 });
 
-test('parseTAB decodes WindowsSimpChinese grid road line geometry', () => {
-  const r = parseTAB(path.join(DATA, '网格内道路图层.TAB'));
+test('parseTAB decodes WindowsSimpChinese grid road line geometry', { skip: skipIfMissing(GRID_ROAD_TAB) }, () => {
+  const r = parseTAB(GRID_ROAD_TAB);
   assert.equal(r.features.length, 28);
   assert.equal(r.meta?.charset, 'WindowsSimpChinese');
   const geometries = r.features.map((f) => f.geometry).filter(Boolean);
@@ -327,8 +372,8 @@ test('parseTAB decodes WindowsSimpChinese grid road line geometry', () => {
   assert.ok(coords[0][1] > 30 && coords[0][1] < 31, 'grid road latitude should decode from scaled MAP coordinates');
 });
 
-test('parseTAB decodes JN legacy region geometry', () => {
-  const r = parseTAB(path.join(DATA, 'JN-36-01.TAB'));
+test('parseTAB decodes JN legacy region geometry', { skip: skipIfMissing(JN_REGION_TAB) }, () => {
+  const r = parseTAB(JN_REGION_TAB);
   assert.equal(r.features.length, 1);
   assert.equal(r.features[0].properties.JN, 'JN-36-01');
   assert.equal(r.features[0].geometry?.type, 'Polygon');

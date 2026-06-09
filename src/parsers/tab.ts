@@ -360,9 +360,28 @@ interface MapReader {
   geometries: Map<number, Geometry | null>;
 }
 
+interface MapTransform {
+  blockSize: number;
+  version: number;
+  quadrant: number;
+  xScale: number;
+  yScale: number;
+  xDispl: number;
+  yDispl: number;
+  xPrecision: number;
+  yPrecision: number;
+}
+
+interface CoordSection {
+  numVertices: number;
+  numHoles: number;
+  nVertexOffset: number;
+}
+
 function readMapGeometry(mapPath: string, idPath: string): MapReader {
   const buf = fs.readFileSync(mapPath);
   const id = readId(idPath);
+  const transform = readMapTransform(buf);
   const geometries = new Map<number, Geometry | null>();
 
   // The .id file stores the file offset of the geometry object for each
@@ -376,10 +395,54 @@ function readMapGeometry(mapPath: string, idPath: string): MapReader {
       continue;
     }
     const objType = buf.readInt32LE(off);
-    const geom = parseMapObject(objType, buf, off, nextMapOffset(id.offsets, off, buf.length));
+    const geom = parseMapObject(objType, buf, off, nextMapOffset(id.offsets, off, buf.length), transform);
     geometries.set(off, geom);
   }
   return { geometries };
+}
+
+function readMapTransform(buf: Buffer): MapTransform | null {
+  if (buf.length < 0x190) return null;
+  try {
+    const blockSize = buf.readInt16LE(0x106);
+    const xScale = buf.readDoubleLE(0x170);
+    const yScale = buf.readDoubleLE(0x178);
+    if (blockSize < 512 || xScale === 0 || yScale === 0 || !Number.isFinite(xScale) || !Number.isFinite(yScale)) {
+      return null;
+    }
+    const xPrecision = Math.pow(10, Math.round(Math.log10(Math.abs(xScale))));
+    const yPrecision = Math.pow(10, Math.round(Math.log10(Math.abs(yScale))));
+    return {
+      blockSize,
+      version: buf.readInt16LE(0x104),
+      quadrant: buf[0x161],
+      xScale,
+      yScale,
+      xDispl: buf.readDoubleLE(0x180),
+      yDispl: buf.readDoubleLE(0x188),
+      xPrecision,
+      yPrecision,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mapIntToCoord(transform: MapTransform, xInt: number, yInt: number): number[] {
+  const flippedX = transform.quadrant === 2 || transform.quadrant === 3 || transform.quadrant === 0;
+  const flippedY = transform.quadrant === 3 || transform.quadrant === 4 || transform.quadrant === 0;
+  let x = flippedX
+    ? -1 * (xInt + transform.xDispl) / transform.xScale
+    : (xInt - transform.xDispl) / transform.xScale;
+  let y = flippedY
+    ? -1 * (yInt + transform.yDispl) / transform.yScale
+    : (yInt - transform.yDispl) / transform.yScale;
+
+  if (transform.xPrecision > 0 && transform.yPrecision > 0) {
+    x = Math.round(x * transform.xPrecision) / transform.xPrecision;
+    y = Math.round(y * transform.yPrecision) / transform.yPrecision;
+  }
+  return [x, y];
 }
 
 function nextMapOffset(offsets: number[], off: number, fallback: number): number {
@@ -390,7 +453,7 @@ function nextMapOffset(offsets: number[], off: number, fallback: number): number
   return next;
 }
 
-function parseMapObject(type: number, buf: Buffer, off: number, end = buf.length): Geometry | null {
+function parseMapObject(type: number, buf: Buffer, off: number, end = buf.length, transform: MapTransform | null = null): Geometry | null {
   // Layout for a Region (type 4): after the type code, the format is:
   //   4 bytes: type (already read)
   //   For region, the structure is more elaborate. We walk it carefully.
@@ -421,8 +484,8 @@ function parseMapObject(type: number, buf: Buffer, off: number, end = buf.length
     if (legacyType === 0x25) {
       return parseLegacyPointTableLine(buf, off, end);
     }
-    if (legacyType === 0x0d) {
-      return parseLegacyRegionObject(buf, off, end);
+    if (legacyType === 0x0d || legacyType === 0x0e) {
+      return parseLegacyRegionObject(buf, off, end, transform);
     }
     return null;
   } catch {
@@ -495,7 +558,10 @@ function parseLegacyPointTableLine(buf: Buffer, off: number, end: number): Geome
   return { type: 'LineString', coordinates: coords };
 }
 
-function parseLegacyRegionObject(buf: Buffer, off: number, end: number): Geometry | null {
+function parseLegacyRegionObject(buf: Buffer, off: number, end: number, transform: MapTransform | null = null): Geometry | null {
+  const mapInfoRegion = transform ? parseMapInfoRegion(buf, off, transform) : null;
+  if (mapInfoRegion) return mapInfoRegion;
+
   const max = Math.min(end, buf.length, off + 8192);
   const ref = findLegacyScaledReference(buf, off, max);
   if (!ref) return null;
@@ -519,6 +585,136 @@ function parseLegacyRegionObject(buf: Buffer, off: number, end: number): Geometr
   }
 
   return bestRing ? { type: 'Polygon', coordinates: [bestRing] } : null;
+}
+
+function parseMapInfoRegion(buf: Buffer, off: number, transform: MapTransform): Geometry | null {
+  const type = buf[off];
+  const compressed = type === 0x0d;
+  if ((!compressed && type !== 0x0e) || off + (compressed ? 37 : 41) > buf.length) return null;
+
+  const coordBlockPtr = buf.readInt32LE(off + 5);
+  const coordDataSize = buf.readInt32LE(off + 9) & 0x7fffffff;
+  const numSections = buf.readUInt16LE(off + 13);
+  if (
+    coordBlockPtr <= 0 ||
+    coordBlockPtr >= buf.length ||
+    coordDataSize <= 0 ||
+    numSections <= 0 ||
+    numSections > 10_000
+  ) {
+    return null;
+  }
+
+  const orgX = compressed ? buf.readInt32LE(off + 19) : 0;
+  const orgY = compressed ? buf.readInt32LE(off + 23) : 0;
+  const cursor = new CoordBlockCursor(buf, coordBlockPtr, transform.blockSize);
+  const sectionSize = 24;
+  const totalHeaderSize = sectionSize * numSections;
+  const sections: CoordSection[] = [];
+  let totalVertices = 0;
+
+  for (let i = 0; i < numSections; i++) {
+    const numVertices = cursor.readUInt16();
+    const numHoles = cursor.readUInt16();
+    readMapInfoIntCoord(cursor, compressed, orgX, orgY);
+    readMapInfoIntCoord(cursor, compressed, orgX, orgY);
+    const nDataOffset = cursor.readInt32();
+    if (numVertices < 4 || nDataOffset < totalHeaderSize) return null;
+    const nVertexOffset = Math.floor((nDataOffset - totalHeaderSize) / 8);
+    sections.push({ numVertices, numHoles, nVertexOffset });
+    totalVertices += numVertices;
+    if (totalVertices > 1_000_000) return null;
+  }
+
+  const intCoords: number[][] = [];
+  for (let i = 0; i < totalVertices; i++) {
+    const [x, y] = readMapInfoIntCoord(cursor, compressed, orgX, orgY);
+    intCoords.push(mapIntToCoord(transform, x, y));
+  }
+
+  const rings = sections.map((section) => {
+    const ring = intCoords.slice(section.nVertexOffset, section.nVertexOffset + section.numVertices);
+    return closeRing(ring);
+  });
+  if (rings.some((ring) => ring.length < 4 || Math.abs(signedArea(ring)) < 1e-12)) return null;
+
+  const polygons: number[][][][] = [];
+  for (let i = 0; i < sections.length;) {
+    const holes = sections[i].numHoles;
+    const polygon = [rings[i], ...rings.slice(i + 1, i + 1 + holes)];
+    polygons.push(polygon);
+    i += 1 + holes;
+  }
+
+  if (polygons.length === 0) return null;
+  if (polygons.length === 1) return { type: 'Polygon', coordinates: polygons[0] };
+  return { type: 'MultiPolygon', coordinates: polygons };
+}
+
+function readMapInfoIntCoord(cursor: CoordBlockCursor, compressed: boolean, orgX: number, orgY: number): [number, number] {
+  if (compressed) return [orgX + cursor.readInt16(), orgY + cursor.readInt16()];
+  return [cursor.readInt32(), cursor.readInt32()];
+}
+
+class CoordBlockCursor {
+  private pos: number;
+
+  constructor(
+    private readonly buf: Buffer,
+    start: number,
+    private readonly blockSize: number,
+  ) {
+    this.pos = start;
+  }
+
+  readUInt16(): number {
+    const bytes = this.readBytes(2);
+    return bytes.readUInt16LE(0);
+  }
+
+  readInt16(): number {
+    const bytes = this.readBytes(2);
+    return bytes.readInt16LE(0);
+  }
+
+  readInt32(): number {
+    const bytes = this.readBytes(4);
+    return bytes.readInt32LE(0);
+  }
+
+  private readBytes(length: number): Buffer {
+    const out = Buffer.allocUnsafe(length);
+    for (let i = 0; i < length; i++) out[i] = this.readByte();
+    return out;
+  }
+
+  private readByte(): number {
+    this.ensureReadable();
+    return this.buf[this.pos++];
+  }
+
+  private ensureReadable(): void {
+    if (this.pos < 0 || this.pos >= this.buf.length) throw new Error('Coordinate cursor out of range.');
+    const blockStart = Math.floor(this.pos / this.blockSize) * this.blockSize;
+    if (blockStart + 8 > this.buf.length || this.buf.readUInt16LE(blockStart) !== 3) return;
+
+    const dataStart = blockStart + 8;
+    const dataEnd = dataStart + this.buf.readUInt16LE(blockStart + 2);
+    if (this.pos < dataStart) {
+      this.pos = dataStart;
+      return;
+    }
+    if (this.pos < dataEnd) return;
+
+    const next = this.buf.readInt32LE(blockStart + 4);
+    if (next <= 0 || next + 8 > this.buf.length) throw new Error('Coordinate block chain ended early.');
+    this.pos = next + 8;
+  }
+}
+
+function closeRing(ring: number[][]): number[][] {
+  if (ring.length === 0 || sameCoord(ring[0], ring[ring.length - 1])) return ring;
+  return [...ring, [...ring[0]]];
 }
 
 function findLegacyScaledReference(

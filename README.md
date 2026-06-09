@@ -10,11 +10,12 @@
 - Convert supported inputs to GeoJSON, KML, GPX, ESRI JSON, CSV/WKT, Shapefile, or MapInfo MIF. MapInfo TAB writing is available when GDAL `ogr2ogr` is installed.
 - Stream large GeoJSON files to GeoJSON/KML/GPX without loading the whole file into memory.
 - Generate standard XYZ Mapbox Vector Tile (`.pbf`) directories from supported vector inputs.
+- Import vector files into PostgreSQL/PostGIS or SQL Server geometry tables, and export geometry tables back to vector files.
 - Read Shapefile DBF attributes record-by-record, including DBF files larger than 2 GiB, and decode UTF-8 Chinese field names when `.cpg` is present.
 - Preserve common metadata such as CRS, bbox, attributes, and parser-specific details.
 - Transform coordinates between WGS84, WebMercator, CGCS2000, GCJ-02, BD-09, and supported `EPSG:xxxx` definitions.
 - Detect common Chinese GIS text encodings from `.cpg`, TAB headers, valid UTF-8 DBF bytes, dBASE language drivers, and content heuristics.
-- Decode MapInfo TAB `WindowsSimpChinese` field names and attribute values, plus common legacy line, point-table line, and `0x0D` region records into GeoJSON geometries.
+- Decode MapInfo TAB `WindowsSimpChinese` field names and attribute values, plus common legacy lines, point-table lines, and v300 compressed/uncompressed region coordinate blocks into GeoJSON geometries.
 
 ## Requirements
 
@@ -33,7 +34,7 @@ gis --help
 From a local package tarball:
 
 ```bash
-npm install -g ./gis-read-1.0.4.tgz
+npm install -g ./gis-read-1.0.5.tgz
 gis --help
 ```
 
@@ -69,6 +70,12 @@ gis convert input.geojson -o output.tab -t tab # requires GDAL ogr2ogr
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
 gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 
+# Import/export database geometry tables
+gis db-import roads.shp --db postgresql --connection "$POSTGIS_URL" --srid 4326
+gis db-import input.shp --db postgresql --connection "$POSTGIS_URL" --table public.roads --srid 4326
+gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads --geom-column geom
+gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads -o roads.shp -t shapefile
+
 # Stream large GeoJSON files
 gis stream big.geojson -o big.kml
 gis convert big.geojson -o big.geojson --stream
@@ -91,7 +98,7 @@ node dist/cli.js --help
 | Format | Extensions | Read | Write | Notes |
 | --- | --- | --- | --- | --- |
 | Shapefile | `.shp` + sidecars | Yes | Yes | Reads DBF attributes without one huge Buffer, supports UTF-8 Chinese field names from `.cpg`, and writes `.shp/.shx/.dbf/.cpg`; one geometry family per bundle. |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes* | Write requires GDAL `ogr2ogr`; reads TAB charsets, Chinese attributes, common legacy line records, point-table lines, and `0x0D` regions; unsupported private `.map` records may return `null`. |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes* | Write requires GDAL `ogr2ogr`; reads TAB charsets, Chinese attributes, common legacy line records, point-table lines, and v300 compressed/uncompressed regions; unsupported private `.map` records may return `null`. |
 | GeoJSON | `.geojson`, `.json` | Yes | Yes | Streaming input and output supported. |
 | KML | `.kml` | Yes | Yes | Supports Placemark, ExtendedData, Point, LineString, Polygon, MultiGeometry. |
 | GPX | `.gpx` | Yes | Yes | Waypoints and tracks/routes; polygon output is skipped. |
@@ -101,6 +108,8 @@ node dist/cli.js --help
 | ESRI JSON | `.json` | Yes | Yes | Reads/writes ArcGIS-style geometry structures. |
 | MapInfo MIF | `.mif` + `.mid` | Yes | Yes | Writes text `.mif` plus attribute `.mid`. |
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | No | Yes | Generated with `gis tile`; all input geometries are converted to WebMercator. |
+| PostgreSQL/PostGIS | geometry tables | Yes | Yes | Uses WKB via `ST_AsBinary` and `ST_GeomFromWKB`; connection from `--connection` or `GIS_READ_PG_CONNECTION`. |
+| SQL Server | geometry tables | Yes | Yes | Uses WKB via `STAsBinary()` and `geometry::STGeomFromWKB`; connection from `--connection` or `GIS_READ_MSSQL_CONNECTION`. |
 
 ## Library Usage
 
@@ -117,6 +126,8 @@ import {
   writeFile,
   tileFile,
   writeVectorTiles,
+  importFileToDatabase,
+  exportDatabaseTable,
   transformFeatures,
 } from 'gis-read';
 
@@ -140,6 +151,20 @@ await tileFile('input.shp', {
   fromCrs: 'WGS84',
   threads: 4,
   layerName: 'buildings',
+});
+
+await importFileToDatabase('input.shp', {
+  db: 'postgresql',
+  connection: process.env.GIS_READ_PG_CONNECTION,
+  table: 'public.roads', // optional; defaults to the input filename without extension
+  srid: 4326,
+});
+
+await exportDatabaseTable({
+  db: 'sqlserver',
+  connection: process.env.GIS_READ_MSSQL_CONNECTION,
+  table: 'dbo.roads',
+  outputPath: 'roads.geojson', // optional; defaults to <table>.geojson
 });
 ```
 
@@ -189,7 +214,7 @@ npm start -- info input.geojson
 npm pack
 ```
 
-The test suite covers parser behavior, CLI conversion behavior, vector tile generation, streaming GeoJSON, CRS transforms, encoding detection, and error handling.
+The test suite covers parser behavior, CLI conversion behavior, vector tile generation, database SQL/WKB behavior, streaming GeoJSON, CRS transforms, encoding detection, and error handling. Set `GIS_READ_TEST_PG_CONNECTION` to run the optional live PostGIS integration test.
 
 ## Packaging
 
@@ -240,11 +265,14 @@ test/
 - Shapefile DBF reading avoids Node's 2 GiB single-Buffer limit, but normal `parse` and `convert` still materialize the returned features in memory. Use `gis parse input.shp --limit 10` to inspect very large data first.
 - Vector tile generation writes XYZ `.pbf` directories only; MBTiles and GeoJSON tile output are not included.
 - Vector tile input is parsed into memory before tiling; use `--threads` to parallelize tile encoding across worker threads.
+- Database import auto-creates geometry tables and fails if the target table already exists; when `--table` is omitted, the input filename without extension is used as the table name.
+- Database export accepts a table name plus optional `--where`; when `-o/--output` is omitted, output defaults to `<table>.geojson`. Arbitrary SQL export is not included.
+- Derived database table names must be valid identifiers: letters/numbers/underscore, not starting with a number. Chinese letters are accepted; spaces and hyphens are rejected.
 - MapInfo TAB output delegates to GDAL `ogr2ogr`; install GDAL or write MapInfo MIF when `ogr2ogr` is unavailable.
 - CSV output stores geometry as WKT in a single `wkt` column.
 - GPX cannot represent polygons; polygon and multipolygon output is skipped.
 - KML parsing focuses on static Placemark geometry and does not cover dynamic display features such as NetworkLink, Region, and LOD.
-- Some MapInfo TAB `.map` private record types may produce `geometry: null`; attributes are still returned. Common legacy line and point-table records with scaled lon/lat coordinates are decoded as `LineString` or `MultiLineString`, and common `0x0D` legacy region point tables are decoded as `Polygon`.
+- Some MapInfo TAB `.map` private record types may produce `geometry: null`; attributes are still returned. Common legacy line and point-table records with scaled lon/lat coordinates are decoded as `LineString` or `MultiLineString`, and v300 compressed/uncompressed region coordinate blocks are decoded as `Polygon` or `MultiPolygon`.
 
 ## Contributing
 

@@ -30,9 +30,12 @@ import {
   writeEsriJSON,
   writeFile,
   tileFile,
+  importFileToDatabase,
+  exportDatabaseTable,
   parseGeoJSONStream,
   formatKMLPlacemarkLines,
   type Format,
+  type DatabaseKind,
 } from './parsers/index.js';
 import { formatBytes, formatDuration, withErrorBoundary, readTextFile } from './io.js';
 import { getCRS, transformFeatures, transformGeometry, normalizeId } from './crs.js';
@@ -284,6 +287,85 @@ program
   });
 
 program
+  .command('db-import')
+  .description('Import a supported vector file into a PostgreSQL/PostGIS or SQL Server geometry table.')
+  .argument('<input>', 'input GIS file')
+  .requiredOption('--db <db>', 'database type: postgresql or sqlserver')
+  .option('--connection <connection>', 'database connection string')
+  .option('--table <schema.table>', 'target table name; defaults to the input filename without extension')
+  .option('--geom-column <name>', 'geometry column name', 'geom')
+  .option('--srid <n>', 'target geometry SRID', (v) => Number(v), 4326)
+  .option('--from-crs <crs>', 'source CRS before optional reprojection')
+  .option('--to-crs <crs>', 'target CRS before import')
+  .action(async (
+    input: string,
+    opts: {
+      db: DatabaseKind;
+      connection?: string;
+      table?: string;
+      geomColumn: string;
+      srid: number;
+      fromCrs?: string;
+      toCrs?: string;
+    },
+  ) => {
+    const done = log.startTimer('db-import');
+    const summary = await importFileToDatabase(input, {
+      db: normalizeDbKind(opts.db),
+      connection: opts.connection,
+      table: opts.table,
+      geomColumn: opts.geomColumn,
+      srid: opts.srid,
+      fromCrs: opts.fromCrs,
+      toCrs: opts.toCrs,
+    });
+    done('Database import complete', {
+      db: summary.db,
+      table: summary.table,
+      features: summary.featureCount,
+      geomColumn: summary.geomColumn,
+      srid: summary.srid,
+    });
+  });
+
+program
+  .command('db-export')
+  .description('Export a PostgreSQL/PostGIS or SQL Server geometry table to a supported vector file.')
+  .requiredOption('--db <db>', 'database type: postgresql or sqlserver')
+  .option('--connection <connection>', 'database connection string')
+  .requiredOption('--table <schema.table>', 'source table name')
+  .option('-o, --output <file>', 'output vector file; defaults to <table>.geojson')
+  .option('-t, --to <format>', 'force output format')
+  .option('--geom-column <name>', 'geometry column name', 'geom')
+  .option('--where <sql>', 'optional SQL WHERE clause without the WHERE keyword')
+  .action(async (opts: {
+    db: DatabaseKind;
+    connection?: string;
+    table: string;
+    output?: string;
+    to?: Format;
+    geomColumn: string;
+    where?: string;
+  }) => {
+    const done = log.startTimer('db-export');
+    const summary = await exportDatabaseTable({
+      db: normalizeDbKind(opts.db),
+      connection: opts.connection,
+      table: opts.table,
+      outputPath: opts.output,
+      outputFormat: opts.to,
+      geomColumn: opts.geomColumn,
+      where: opts.where,
+    });
+    done('Database export complete', {
+      db: summary.db,
+      table: summary.table,
+      features: summary.featureCount,
+      output: path.resolve(summary.outputPath ?? opts.output ?? ''),
+    });
+  });
+
+program
   .command('crs')
   .description('Re-project features to a different CRS in place (GeoJSON only).')
   .argument('<file>', 'input GeoJSON file')
@@ -344,6 +426,11 @@ function gpxForFeature(f: any, precision: number): string {
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function normalizeDbKind(db: string): DatabaseKind {
+  if (db === 'postgresql' || db === 'sqlserver') return db;
+  throw new Error(`Unsupported database "${db}". Use postgresql or sqlserver.`);
 }
 
 // --- Main: route through error boundary -----------------------------------
