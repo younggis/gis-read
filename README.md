@@ -6,8 +6,8 @@
 
 ## Features
 
-- Parse Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV/WKT, ESRI JSON, and MapInfo MIF.
-- Convert supported inputs to GeoJSON, KML, GPX, ESRI JSON, CSV/WKT, Shapefile, or MapInfo MIF. MapInfo TAB writing is available when GDAL `ogr2ogr` is installed.
+- Parse Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV/WKT, ESRI JSON, MapInfo MIF, and GeoPackage.
+- Convert supported inputs to GeoJSON, KML, GPX, ESRI JSON, CSV/WKT, Shapefile, MapInfo MIF, or GeoPackage. MapInfo TAB writing is available when GDAL `ogr2ogr` is installed.
 - Stream large GeoJSON files to GeoJSON/KML/GPX without loading the whole file into memory.
 - Generate standard XYZ Mapbox Vector Tile (`.pbf`) directories from supported vector inputs.
 - Import vector files into PostgreSQL/PostGIS or SQL Server geometry tables, and export geometry tables back to vector files.
@@ -34,7 +34,7 @@ gis --help
 From a local package tarball:
 
 ```bash
-npm install -g ./gis-read-1.0.6.tgz
+npm install -g ./gis-read-1.0.7.tgz
 gis --help
 ```
 
@@ -65,6 +65,12 @@ gis convert input.geojson -o output.csv
 gis convert points.geojson -o points.shp -t shapefile
 gis convert input.geojson -o output.mif
 gis convert input.geojson -o output.tab -t tab # requires GDAL ogr2ogr
+
+# GeoPackage (multi-layer support)
+gis info input.gpkg                          # list all layers
+gis convert input.gpkg -o output.geojson     # export all layers (one file per layer)
+gis convert input.gpkg -o output.geojson --layer roads  # export specific layer
+gis convert input.geojson -o output.gpkg     # write GeoPackage
 
 # Generate MVT/PBF vector tiles
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
@@ -107,6 +113,7 @@ node dist/cli.js --help
 | CSV/WKT | `.csv` | Yes | Yes | Writes attributes plus a `wkt` geometry column. |
 | ESRI JSON | `.json` | Yes | Yes | Reads/writes ArcGIS-style geometry structures. |
 | MapInfo MIF | `.mif` + `.mid` | Yes | Yes | Writes text `.mif` plus attribute `.mid`. |
+| GeoPackage | `.gpkg` | Yes | Yes | Multi-layer support; `--layer` selects a specific layer; without `--layer`, each layer exports to a separate file. Also reads SpatiaLite `.sqlite` files. |
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | No | Yes | Generated with `gis tile`; all input geometries are converted to WebMercator. |
 | PostgreSQL/PostGIS | geometry tables | Yes | Yes | Uses WKB via `ST_AsBinary` and `ST_GeomFromWKB`; connection from `--connection` or `GIS_READ_PG_CONNECTION`. |
 | SQL Server | geometry tables | Yes | Yes | Uses WKB via `STAsBinary()` and `geometry::STGeomFromWKB`; connection from `--connection` or `GIS_READ_MSSQL_CONNECTION`. |
@@ -129,6 +136,10 @@ import {
   importFileToDatabase,
   exportDatabaseTable,
   transformFeatures,
+  parseGeoPackage,
+  parseGeoPackageLayers,
+  writeGeoPackage,
+  listGeoPackageLayers,
 } from 'gis-read';
 
 const parsed = parseFile('input.shp');
@@ -166,6 +177,16 @@ await exportDatabaseTable({
   table: 'dbo.roads',
   outputPath: 'roads.geojson', // optional; defaults to <table>.geojson
 });
+
+// GeoPackage: list layers and read specific layer
+const layers = listGeoPackageLayers('input.gpkg');
+console.log('Layers:', layers);
+
+const gpkg = parseGeoPackage('input.gpkg', { layer: 'roads' });
+console.log(gpkg.features.length);
+
+// GeoPackage: write
+writeGeoPackage(parsed, { outputPath: 'output.gpkg' });
 ```
 
 Streaming GeoJSON:
@@ -275,6 +296,7 @@ test/
 - CSV output stores geometry as WKT in a single `wkt` column.
 - GPX cannot represent polygons; polygon and multipolygon output is skipped.
 - KML parsing focuses on static Placemark geometry and does not cover dynamic display features such as NetworkLink, Region, and LOD.
+- GeoPackage reading loads the entire file into memory via sql.js (WASM); very large files may require significant RAM. Use `--layer` to process individual layers. The `_layer` property is added to each feature to preserve the source table name.
 - Some MapInfo TAB `.map` private record types may produce `geometry: null`; attributes are still returned. Common legacy line records and v500 `0x25` point-table line records are decoded as `LineString` or `MultiLineString`, and v300 compressed/uncompressed region coordinate blocks are decoded as `Polygon` or `MultiPolygon`.
 
 ## Contributing

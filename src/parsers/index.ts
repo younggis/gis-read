@@ -15,6 +15,7 @@ import { parseCZML } from './czml.js';
 import { parseCSV } from './csv.js';
 import { parseEsriJSON } from './esrijson.js';
 import { parseMIF } from './mif.js';
+import { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers } from './geopackage.js';
 import { writeCSV } from './csv.js';
 import { writeEsriJSON } from './esrijson.js';
 import { writeGeoJSON } from './geojson.js';
@@ -53,6 +54,8 @@ export function parseFile(filePath: string, format?: Format, opts: ParseOptions 
       return parseEsriJSON(fs.readFileSync(filePath));
     case 'mif':
       return parseMIF(filePath);
+    case 'geopackage':
+      return parseGeoPackage(filePath, opts);
     default:
       throw new Error(`Unknown / unsupported format for: ${filePath}`);
   }
@@ -86,8 +89,11 @@ export function writeFile(result: ParseResult, outputPath: string, format?: Form
     case 'tab':
       writeTAB(result, writeOpts);
       return;
+    case 'geopackage':
+      writeGeoPackage(result, writeOpts);
+      return;
     default:
-      throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, gpx, esrijson, csv, mif, shapefile, tab`);
+      throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, gpx, esrijson, csv, mif, shapefile, tab, geopackage`);
   }
 }
 
@@ -115,6 +121,7 @@ export { parseCZML, convertCZML } from './czml.js';
 export { parseCSV, parseWKT, writeCSV, convertCSV } from './csv.js';
 export { parseEsriJSON, writeEsriJSON, convertEsriJSON } from './esrijson.js';
 export { parseMIF, writeMIF, convertMIF } from './mif.js';
+export { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers } from './geopackage.js';
 export type { Format } from '../format-detect.js';
 export type { Feature, FeatureCollection, Geometry, Properties, ParseOptions, ParseResult, WriteOptions } from '../types.js';
 export { Logger, log } from '../logger.js';

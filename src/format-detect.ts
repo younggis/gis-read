@@ -17,6 +17,7 @@ export type Format =
   | 'csv'
   | 'esrijson'
   | 'mif'
+  | 'geopackage'
   | 'unknown';
 
 /** Detect format from a file path. Inspects .tab and .shp companions when relevant. */
@@ -32,6 +33,7 @@ export function detectFormat(filePath: string): Format {
   if (lower.endsWith('.czml')) return 'czml';
   if (lower.endsWith('.csv')) return 'csv';
   if (lower.endsWith('.mif')) return 'mif';
+  if (lower.endsWith('.gpkg')) return 'geopackage';
   if (lower.endsWith('.json')) {
     // Disambiguate plain .json between geojson / topojson / esrijson / czml.
     return detectJsonVariant(filePath);
@@ -81,6 +83,9 @@ export function detectFormatFromBuffer(buf: Buffer): Format {
 
   // MIF begins with "Version" header.
   if (/^Version\s+\d+/i.test(head)) return 'mif';
+
+  // SQLite / GeoPackage magic: "SQLite format 3\0"
+  if (head.startsWith('SQLite format 3\0')) return 'geopackage';
 
   // JSON-based formats.
   const trimmed = head.trimStart();

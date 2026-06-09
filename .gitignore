@@ -7,3 +7,5 @@ dist/
 *.tsbuildinfo
 output/
 AGENTS.md
+CLAUDE.md
+operate.md
