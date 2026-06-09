@@ -1,6 +1,6 @@
 {
   "name": "gis-read",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "GIS data parser and converter CLI/library for Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV, ESRI JSON, and MIF",
   "type": "module",
   "main": "dist/index.js",
@@ -49,6 +49,8 @@
   "dependencies": {
     "@tmcw/togeojson": "^7.1.2",
     "commander": "^12.1.0",
+    "mssql": "^11.0.1",
+    "pg": "^8.13.1",
     "proj4": "^2.20.8",
     "shpjs": "^6.2.0",
     "stream-json": "^3.3.0"

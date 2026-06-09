@@ -119,3 +119,20 @@ export type { Format } from '../format-detect.js';
 export type { Feature, FeatureCollection, Geometry, Properties, ParseOptions, ParseResult, WriteOptions } from '../types.js';
 export { Logger, log } from '../logger.js';
 export { formatBytes, formatDuration, withErrorBoundary, readFileMaybeStream, streamTextLines, streamJson } from '../io.js';
+export {
+  importFileToDatabase,
+  exportDatabaseTable,
+  readDatabaseTable,
+  writeDatabaseTable,
+  inferDatabaseOutputPathFromTable,
+  inferDatabaseTableNameFromPath,
+  validateDatabaseIdentifier,
+  validateDatabaseTableName,
+} from '../database/index.js';
+export type {
+  DatabaseConnectionOptions,
+  DatabaseExportOptions,
+  DatabaseImportOptions,
+  DatabaseKind,
+  DatabaseTransferSummary,
+} from '../database/index.js';
