@@ -34,7 +34,7 @@ gis --help
 From a local package tarball:
 
 ```bash
-npm install -g ./gis-read-1.0.5.tgz
+npm install -g ./gis-read-1.0.6.tgz
 gis --help
 ```
 
@@ -73,7 +73,7 @@ gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 # Import/export database geometry tables
 gis db-import roads.shp --db postgresql --connection "$POSTGIS_URL" --srid 4326
 gis db-import input.shp --db postgresql --connection "$POSTGIS_URL" --table public.roads --srid 4326
-gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads --geom-column geom
+gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads
 gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads -o roads.shp -t shapefile
 
 # Stream large GeoJSON files
@@ -266,8 +266,10 @@ test/
 - Vector tile generation writes XYZ `.pbf` directories only; MBTiles and GeoJSON tile output are not included.
 - Vector tile input is parsed into memory before tiling; use `--threads` to parallelize tile encoding across worker threads.
 - Database import auto-creates geometry tables and fails if the target table already exists; when `--table` is omitted, the input filename without extension is used as the table name.
-- Database export accepts a table name plus optional `--where`; when `-o/--output` is omitted, output defaults to `<table>.geojson`. Arbitrary SQL export is not included.
+- Imported attribute columns are sanitized and de-duplicated case-insensitively; source fields such as `ID` that collide with the internal `id` primary key are written as `ID_1`.
+- Database export accepts a table name plus optional `--where`; when `--geom-column` is omitted, it auto-detects the only `geometry`/`geography` column. When `-o/--output` is omitted, output defaults to `<table>.geojson`. Arbitrary SQL export is not included.
 - Derived database table names must be valid identifiers: letters/numbers/underscore, not starting with a number. Chinese letters are accepted; spaces and hyphens are rejected.
+- SQL Server import/export uses the `mssql` package and supports the CommonJS default export shape used by `mssql@11`. For older SQL Server TLS setups, add `Encrypt=false` to the connection string or enable TLS 1.2 on the server; `TrustServerCertificate=true` skips certificate validation but does not disable encryption.
 - Encoding detection can recover mislabeled UTF-8 `.cpg` files and `Neutral` TAB headers when the original DBF/DAT bytes still contain Chinese text. Characters already replaced with literal `?` by the source exporter, or DBF field names truncated mid-character by the 11-byte dBASE name limit, cannot be reconstructed.
 - MapInfo TAB output delegates to GDAL `ogr2ogr`; install GDAL or write MapInfo MIF when `ogr2ogr` is unavailable.
 - CSV output stores geometry as WKT in a single `wkt` column.

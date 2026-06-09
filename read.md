@@ -1,6 +1,6 @@
 # gis-read
 
-当前版本：`1.0.5`
+当前版本：`1.0.6`
 
 中文 | [English](./README.md)
 
@@ -36,7 +36,7 @@ gis --help
 从本地 tarball 安装：
 
 ```bash
-npm install -g ./gis-read-1.0.5.tgz
+npm install -g ./gis-read-1.0.6.tgz
 gis --help
 ```
 
@@ -75,7 +75,7 @@ gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 # 数据库空间表导入/导出
 gis db-import roads.shp --db postgresql --connection "$POSTGIS_URL" --srid 4326
 gis db-import input.shp --db postgresql --connection "$POSTGIS_URL" --table public.roads --srid 4326
-gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads --geom-column geom
+gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads
 gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads -o roads.shp -t shapefile
 
 # 大 GeoJSON 流式转换
@@ -268,8 +268,10 @@ test/
 - 矢量切片当前只输出 XYZ `.pbf` 目录，不包含 MBTiles 或 GeoJSON tiles。
 - 矢量切片会先把输入 features 解析到内存，再按 `--threads` 使用 worker 线程并行编码切片。
 - 数据库导入会自动创建 geometry 表；如果目标表已存在会报错。省略 `--table` 时，默认使用输入文件名去掉扩展名作为表名；暂不支持 append/overwrite 或 geography 列。
-- 数据库导出支持表名和可选 `--where`。省略 `-o/--output` 时，默认写出 `<table>.geojson`；暂不支持任意 SQL 查询导出。
+- 导入属性列会清洗并按大小写不敏感规则去重；源字段 `ID` 如果和内部主键 `id` 冲突，会写为 `ID_1`。
+- 数据库导出支持表名和可选 `--where`。省略 `--geom-column` 时会自动识别唯一的 `geometry` / `geography` 列；省略 `-o/--output` 时，默认写出 `<table>.geojson`；暂不支持任意 SQL 查询导出。
 - 自动推导的数据库表名必须是合法标识符：可包含字母、数字、下划线，不能以数字开头；支持中文名，不支持空格和连字符。
+- SQL Server 导入/导出依赖 `mssql` 包，并兼容 `mssql@11` 的 CommonJS 默认导出形态。旧版 SQL Server TLS 配置可在连接串中追加 `Encrypt=false`，或在服务器启用 TLS 1.2；`TrustServerCertificate=true` 只跳过证书校验，不会关闭加密。
 - 编码识别可恢复 `.cpg` 错写 UTF-8、TAB `Neutral` 但实际为 GBK/GB18030 的属性文本。若源数据导出时已经把字符替换成字面量 `?`，或 DBF 11 字节字段名限制把中文截断到半个字符，工具无法反推出原字符。
 - MapInfo TAB 写出委托给 GDAL `ogr2ogr`；未安装 GDAL 时请改写 MapInfo MIF。
 - CSV 写出会把几何保存为单个 `wkt` 列。

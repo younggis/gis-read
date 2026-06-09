@@ -336,7 +336,7 @@ program
   .requiredOption('--table <schema.table>', 'source table name')
   .option('-o, --output <file>', 'output vector file; defaults to <table>.geojson')
   .option('-t, --to <format>', 'force output format')
-  .option('--geom-column <name>', 'geometry column name', 'geom')
+  .option('--geom-column <name>', 'geometry column name; auto-detected when omitted')
   .option('--where <sql>', 'optional SQL WHERE clause without the WHERE keyword')
   .action(async (opts: {
     db: DatabaseKind;
@@ -344,7 +344,7 @@ program
     table: string;
     output?: string;
     to?: Format;
-    geomColumn: string;
+    geomColumn?: string;
     where?: string;
   }) => {
     const done = log.startTimer('db-export');

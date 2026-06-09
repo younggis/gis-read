@@ -1,6 +1,6 @@
 {
   "name": "gis-read",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "GIS data parser and converter CLI/library for Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV, ESRI JSON, and MIF",
   "type": "module",
   "main": "dist/index.js",
