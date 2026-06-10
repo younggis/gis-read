@@ -1,6 +1,6 @@
 # gis-read
 
-当前版本：`1.0.7`
+当前版本：`1.0.8`
 
 中文 | [English](./README.md)
 
@@ -66,7 +66,7 @@ gis convert input.geojson -o output.esrijson -t esrijson
 gis convert input.geojson -o output.csv
 gis convert points.geojson -o points.shp -t shapefile
 gis convert input.geojson -o output.mif
-gis convert input.geojson -o output.tab -t tab # 需要 GDAL ogr2ogr
+gis convert input.geojson -o output.tab -t tab
 
 # GeoPackage（多图层支持）
 gis info input.gpkg                          # 查看所有图层
@@ -106,7 +106,7 @@ node dist/cli.js --help
 | 格式 | 扩展名 | 读取 | 写出 | 说明 |
 | --- | --- | --- | --- | --- |
 | Shapefile | `.shp` + sidecars | 是 | 是 | DBF 属性不再一次性读入单个 Buffer，支持 `.cpg` 或纠偏后的 GBK/GB18030 内容检测解码中文字段名；写出 `.shp/.shx/.dbf/.cpg`，每个 bundle 只能包含一种几何族。 |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是* | 写出需要 GDAL `ogr2ogr`；支持 TAB 字符集、中文属性值、常见 legacy 线对象、v500 `0x25` 点表线对象和 v300 压缩/未压缩 Region 坐标块读取，部分私有 `.map` 记录仍可能返回 `null`。 |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | 是 | 是 | 原生 v300 格式写出（无需 GDAL）；支持 TAB 字符集、中文属性值、常见 legacy 线对象、v500 `0x25` 点表线对象和 v300 压缩/未压缩 Region 坐标块读取，部分私有 `.map` 记录仍可能返回 `null`。 |
 | GeoJSON | `.geojson`, `.json` | 是 | 是 | 支持流式输入和输出。 |
 | KML | `.kml` | 是 | 是 | 支持 Placemark、ExtendedData、Point、LineString、Polygon、MultiGeometry。 |
 | GPX | `.gpx` | 是 | 是 | 支持 waypoint 和 track/route；Polygon 输出会被跳过。 |
@@ -294,7 +294,7 @@ test/
 - 自动推导的数据库表名必须是合法标识符：可包含字母、数字、下划线，不能以数字开头；支持中文名，不支持空格和连字符。
 - SQL Server 导入/导出依赖 `mssql` 包，并兼容 `mssql@11` 的 CommonJS 默认导出形态。旧版 SQL Server TLS 配置可在连接串中追加 `Encrypt=false`，或在服务器启用 TLS 1.2；`TrustServerCertificate=true` 只跳过证书校验，不会关闭加密。
 - 编码识别可恢复 `.cpg` 错写 UTF-8、TAB `Neutral` 但实际为 GBK/GB18030 的属性文本。若源数据导出时已经把字符替换成字面量 `?`，或 DBF 11 字节字段名限制把中文截断到半个字符，工具无法反推出原字符。
-- MapInfo TAB 写出委托给 GDAL `ogr2ogr`；未安装 GDAL 时请改写 MapInfo MIF。
+- MapInfo TAB 写出使用原生 v300 格式，无需 GDAL。MultiLineString/MultiPolygon 会合并为单一对象；如需真正的多部分输出，请拆分为单独的 Feature。
 - CSV 写出会把几何保存为单个 `wkt` 列。
 - GPX 不能表达面几何，Polygon / MultiPolygon 输出会被跳过。
 - KML 解析聚焦静态 Placemark 几何，不覆盖 NetworkLink、Region、LOD 等动态显示特性。

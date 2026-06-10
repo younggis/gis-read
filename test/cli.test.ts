@@ -271,17 +271,16 @@ test('convert command writes CSV, MIF, and Shapefile outputs from compatible Geo
   assert.equal(parseShapefile(shpOut).features.length, 2);
 });
 
-test('convert command surfaces TAB writer GDAL requirement when ogr2ogr is unavailable', async () => {
+test('convert command writes native TAB without GDAL', async () => {
   const dir = tempDir();
   const input = writeFixture(dir, 'input.geojson');
   const tabOut = path.join(dir, 'out.tab');
 
-  try {
-    await runCli(['convert', input, '-o', tabOut, '-t', 'tab', '--log-level', 'error'], { ...process.env, PATH: '' });
-    assert.fail('TAB conversion should fail when ogr2ogr is unavailable');
-  } catch (error) {
-    assert.match(String((error as { stderr?: string }).stderr), /GDAL\/OGR.*ogr2ogr/i);
-  }
+  await runCli(['convert', input, '-o', tabOut, '-t', 'tab', '--log-level', 'silent']);
+  assert.ok(fs.existsSync(tabOut), '.tab file should exist');
+  assert.ok(fs.existsSync(path.join(dir, 'out.dat')), '.dat file should exist');
+  assert.ok(fs.existsSync(path.join(dir, 'out.map')), '.map file should exist');
+  assert.ok(fs.existsSync(path.join(dir, 'out.id')), '.id file should exist');
 });
 
 test('convert command writes KML, GPX, and ESRI JSON from GeoJSON input', async () => {
