@@ -140,60 +140,54 @@ export function writeTAB(result: ParseResult, opts: TabWriteOptions = {}): void 
   const coordChainStart = Math.ceil(headerOff / blockSize) * blockSize;
   const maxDataPerBlock = blockSize - 8;
 
-  // First pass: record where each feature's coord data starts in the chain
-  const coordOffsets: number[] = []; // byte offset within the chain data
+  // Write ALL coord payloads into a single shared block chain.
+  // Features are packed contiguously (no per-feature block alignment).
+  // The cursor handles block boundaries automatically.
+  // Each feature's section header must NOT start at block offset 0 (that's the
+  // block header area). We ensure this by starting data at offset 8.
+  const featureByteOffsets: number[] = [];
+  const allPayloads: Buffer[] = [];
   let totalCoordBytes = 0;
   for (let i = 0; i < mapObjects.length; i++) {
-    coordOffsets.push(totalCoordBytes);
-    totalCoordBytes += mapObjects[i].coordPayload?.length ?? 0;
-  }
-
-  // Second pass: write each feature's coord data into blocks, aligned to block boundaries.
-  // Each feature's data starts at a new block to prevent section headers from spanning blocks.
-  let blockStart = coordChainStart;
-  let prevBlockStart = -1;
-
-  for (let i = 0; i < mapObjects.length; i++) {
-    const obj = mapObjects[i];
-    if (!obj.coordPayload) continue;
-
-    const payload = obj.coordPayload;
-    let payloadOffset = 0;
-
-    while (payloadOffset < payload.length) {
-      const remaining = payload.length - payloadOffset;
-      const isLastBlock = remaining <= maxDataPerBlock;
-      const chunkSize = isLastBlock ? remaining : maxDataPerBlock;
-
-      // Write block header — use actual data length so cursor knows when to stop
-      mapBuf.writeUInt16LE(3, blockStart);
-      mapBuf.writeUInt16LE(chunkSize, blockStart + 2);
-      mapBuf.writeInt32LE(0, blockStart + 4);
-
-      // Chain from previous block
-      if (prevBlockStart >= 0 && prevBlockStart !== blockStart) {
-        mapBuf.writeInt32LE(blockStart, prevBlockStart + 4);
-      }
-
-      // Copy data (rest of block is already zeroed)
-      payload.copy(mapBuf, blockStart + 8, payloadOffset, payloadOffset + chunkSize);
-      payloadOffset += chunkSize;
-      prevBlockStart = blockStart;
-      blockStart += blockSize;
+    featureByteOffsets.push(totalCoordBytes);
+    if (mapObjects[i].coordPayload) {
+      allPayloads.push(mapObjects[i].coordPayload!);
+      totalCoordBytes += mapObjects[i].coordPayload!.length;
     }
   }
+  const fullPayload = Buffer.concat(allPayloads);
 
-  // Third pass: patch coordBlockPtr in each object header.
-  // Each feature's coord data starts at a new block (blockStart + 8).
-  let coordBlockOff = coordChainStart;
+  // Write payload into blocks
+  let blockStart = coordChainStart;
+  let prevBlockStart = -1;
+  let payloadOffset = 0;
+
+  while (payloadOffset < fullPayload.length) {
+    const chunkSize = Math.min(maxDataPerBlock, fullPayload.length - payloadOffset);
+
+    mapBuf.writeUInt16LE(3, blockStart);
+    mapBuf.writeUInt16LE(chunkSize, blockStart + 2);
+    mapBuf.writeInt32LE(0, blockStart + 4);
+
+    if (prevBlockStart >= 0) {
+      mapBuf.writeInt32LE(blockStart, prevBlockStart + 4);
+    }
+
+    fullPayload.copy(mapBuf, blockStart + 8, payloadOffset, payloadOffset + chunkSize);
+    payloadOffset += chunkSize;
+    prevBlockStart = blockStart;
+    blockStart += blockSize;
+  }
+
+  // Patch coordBlockPtr in each object header.
+  // coordBlockPtr points to the exact byte position within the block chain.
   for (let i = 0; i < mapObjects.length; i++) {
     if (!mapObjects[i].coordPayload) continue;
-    // coordBlockPtr points to data area of first block for this feature
-    mapBuf.writeInt32LE(coordBlockOff + 8, idOffsets[i] + 5);
-    // Advance past all blocks used by this feature
-    const payloadLen = mapObjects[i].coordPayload!.length;
-    const blocksNeeded = Math.ceil(payloadLen / maxDataPerBlock);
-    coordBlockOff += blocksNeeded * blockSize;
+    const byteOffset = featureByteOffsets[i];
+    const blockIndex = Math.floor(byteOffset / maxDataPerBlock);
+    const offsetInBlock = byteOffset % maxDataPerBlock;
+    const absBlockStart = coordChainStart + blockIndex * blockSize;
+    mapBuf.writeInt32LE(absBlockStart + 8 + offsetInBlock, idOffsets[i] + 5);
   }
 
   // Phase 3: Write block headers.
@@ -245,10 +239,17 @@ export function writeTAB(result: ParseResult, opts: TabWriteOptions = {}): void 
   // 7. Build .tab header.
   const tabText = buildTabHeader(fields, charset);
 
-  // 8. Write all files.
+  // 8. Trim .map buffer to remove trailing empty blocks.
+  let lastUsedBlock = 0;
+  for (let off = 0; off < mapBuf.length; off += blockSize) {
+    if (mapBuf.readUInt16LE(off) !== 0) lastUsedBlock = off;
+  }
+  const trimmedMap = mapBuf.subarray(0, lastUsedBlock + blockSize);
+
+  // 9. Write all files.
   fs.writeFileSync(basePath + '.tab', tabText, 'utf8');
   fs.writeFileSync(basePath + '.dat', datBuf);
-  fs.writeFileSync(basePath + '.map', mapBuf);
+  fs.writeFileSync(basePath + '.map', trimmedMap);
   fs.writeFileSync(basePath + '.id', idBuf);
 
   log.debug(`Wrote MapInfo TAB: ${basePath}.* (${features.length} features)`);
@@ -268,7 +269,8 @@ interface MapTransform {
 }
 
 function buildTransform(bbox: BBox): MapTransform {
-  // Scale: 1000000 matches GDAL output. Quadrant 1 = no flipping.
+  // Scale: 1000000 gives ~0.1m precision. Quadrant 1 = no flipping.
+  // This matches GDAL output. int16 delta max = 32767/10^6 = 0.032 degrees ≈ 3.6km.
   const scale = 1000000;
   return {
     xScale: scale,
@@ -648,11 +650,11 @@ function writeMapHeader(buf: Buffer, transform: MapTransform, bbox: BBox, object
   buf.writeInt16LE(500, 0x104);
   buf.writeInt16LE(transform.blockSize, 0x106);
 
-  // MBR as int32 coordinates (scaled by 10^6)
-  buf.writeInt32LE(Math.round(bbox[0] * 1e6), 0x110);
-  buf.writeInt32LE(Math.round(bbox[1] * 1e6), 0x114);
-  buf.writeInt32LE(Math.round(bbox[2] * 1e6), 0x118);
-  buf.writeInt32LE(Math.round(bbox[3] * 1e6), 0x11C);
+  // MBR as int32 coordinates (scaled by transform scale)
+  buf.writeInt32LE(Math.round(bbox[0] * transform.xScale), 0x110);
+  buf.writeInt32LE(Math.round(bbox[1] * transform.yScale), 0x114);
+  buf.writeInt32LE(Math.round(bbox[2] * transform.xScale), 0x118);
+  buf.writeInt32LE(Math.round(bbox[3] * transform.yScale), 0x11C);
 
   // Object count
   buf.writeInt32LE(objectCount, 0x144);
