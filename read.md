@@ -263,6 +263,28 @@ npm pack --dry-run
 npm publish --access public
 ```
 
+### 离线部署
+
+对于无网络访问的服务器，可构建自包含安装包（所有依赖已打包）：
+
+```bash
+npm run pack:offline
+```
+
+生成 `gis-read-<版本号>-offline.tgz`（约 1.2 MB），传输到目标服务器后安装：
+
+```bash
+npm install -g gis-read-<版本号>-offline.tgz
+gis --help
+```
+
+目标服务器无需联网或执行 `npm install`，仅需预装 `node`（>= 18）。
+
+离线包包含：
+- 通过 esbuild 打包的所有纯 JavaScript 依赖
+- `sql.js` WASM 文件（GeoPackage 支持）
+- `mssql`/`pg` 为可选依赖（仅数据库导入/导出功能需要）
+
 源码仓库：<https://github.com/younggis/gis-read>
 
 ## 项目结构

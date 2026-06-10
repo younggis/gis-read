@@ -261,6 +261,28 @@ To publish publicly:
 npm publish --access public
 ```
 
+### Offline Deployment (离线部署)
+
+For servers without internet access, build a self-contained package that bundles all dependencies:
+
+```bash
+npm run pack:offline
+```
+
+This creates `gis-read-<version>-offline.tgz` (~1.2 MB) with all dependencies bundled. Transfer to the target server and install:
+
+```bash
+npm install -g gis-read-<version>-offline.tgz
+gis --help
+```
+
+No `npm install` or internet connection is required on the target server. Only `node` (>= 18) needs to be pre-installed.
+
+The offline package bundles:
+- All pure JavaScript dependencies via esbuild
+- `sql.js` WASM file for GeoPackage support
+- `mssql`/`pg` are optional (only needed for database import/export)
+
 Source repository: <https://github.com/younggis/gis-read>
 
 ## Repository Layout

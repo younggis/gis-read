@@ -15,11 +15,41 @@ import { decodeWKB, encodeWKB } from '../database/wkb.js';
 import { log } from '../logger.js';
 
 // ---------------------------------------------------------------------------
-// sql.js initialization (top-level await — module is async on first import)
+// sql.js initialization — lazy singleton (no top-level await)
 // ---------------------------------------------------------------------------
 import initSqlJs from 'sql.js';
 
-const SQL = await initSqlJs();
+let _SQL: any = null;
+function getSQL(): any {
+  if (_SQL) return _SQL;
+  throw new Error('GeoPackage not initialized. Call initGeoPackage() first.');
+}
+
+/** Initialize sql.js. Must be called once before using GeoPackage functions. */
+export async function initGeoPackage(): Promise<void> {
+  if (_SQL) return;
+  const nodePath = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const { createRequire } = await import('node:module');
+  _SQL = await initSqlJs({
+    locateFile: (file: string) => {
+      // In development: WASM is in node_modules/sql.js/dist/
+      // In bundled mode: WASM is next to the bundle
+      try {
+        const require = createRequire(import.meta.url);
+        const sqlJsDir = nodePath.dirname(require.resolve('sql.js'));
+        return nodePath.join(sqlJsDir, file);
+      } catch {
+        try {
+          const dir = nodePath.dirname(fileURLToPath(import.meta.url));
+          return nodePath.join(dir, file);
+        } catch {
+          return file;
+        }
+      }
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // GeoPackage Binary Header
@@ -116,7 +146,7 @@ interface LayerInfo {
 }
 
 /** Check if a table exists in the database. */
-function tableExists(db: InstanceType<typeof SQL.Database>, name: string): boolean {
+function tableExists(db: any, name: string): boolean {
   const result = db.exec(
     "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
     [name]
@@ -125,7 +155,7 @@ function tableExists(db: InstanceType<typeof SQL.Database>, name: string): boole
 }
 
 /** Get feature layer metadata from GeoPackage or SpatiaLite tables. */
-function getLayerInfos(db: InstanceType<typeof SQL.Database>): LayerInfo[] {
+function getLayerInfos(db: any): LayerInfo[] {
   const layers: LayerInfo[] = [];
 
   if (tableExists(db, 'gpkg_contents')) {
@@ -179,7 +209,7 @@ function getLayerInfos(db: InstanceType<typeof SQL.Database>): LayerInfo[] {
 }
 
 /** Get CRS info for a given SRID. */
-function getCrsInfo(db: InstanceType<typeof SQL.Database>, srid: number): CRS | undefined {
+function getCrsInfo(db: any, srid: number): CRS | undefined {
   // Try GeoPackage table first
   if (tableExists(db, 'gpkg_spatial_ref_sys')) {
     const result = db.exec(
@@ -231,7 +261,7 @@ function parseGeometryBlob(blob: Uint8Array | null): Geometry | null {
 
 /** Read all features from a single table. */
 function readFeatures(
-  db: InstanceType<typeof SQL.Database>,
+  db: any,
   layer: LayerInfo,
   opts: ParseOptions,
 ): Feature[] {
@@ -343,7 +373,7 @@ function bboxIntersects(a: BBox, b: BBox): boolean {
  */
 export function parseGeoPackage(filePath: string, opts: ParseOptions = {}): ParseResult {
   const fileBuffer = fs.readFileSync(filePath);
-  const db = new SQL.Database(fileBuffer);
+  const db = new (getSQL() as any).Database(fileBuffer);
 
   try {
     const layers = getLayerInfos(db);
@@ -433,7 +463,7 @@ export function parseGeoPackage(filePath: string, opts: ParseOptions = {}): Pars
  */
 export function parseGeoPackageLayers(filePath: string, opts: ParseOptions = {}): ParseResult[] {
   const fileBuffer = fs.readFileSync(filePath);
-  const db = new SQL.Database(fileBuffer);
+  const db = new (getSQL() as any).Database(fileBuffer);
 
   try {
     const layers = getLayerInfos(db);
@@ -491,7 +521,7 @@ export function parseGeoPackageLayers(filePath: string, opts: ParseOptions = {})
  */
 export function listGeoPackageLayers(filePath: string): string[] {
   const fileBuffer = fs.readFileSync(filePath);
-  const db = new SQL.Database(fileBuffer);
+  const db = new (getSQL() as any).Database(fileBuffer);
 
   try {
     return getLayerInfos(db).map(l => l.tableName);
@@ -512,7 +542,7 @@ export function writeGeoPackage(result: ParseResult, opts: WriteOptions = {}): v
   const tableName = opts.name ?? result.name ?? 'features';
   const srid = sridFromCrs(result.crs);
 
-  const db = new SQL.Database();
+  const db = new (getSQL() as any).Database();
 
   try {
     // Set GeoPackage application_id and user_version

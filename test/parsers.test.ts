@@ -22,7 +22,7 @@ import { parseCZML } from '../src/parsers/czml.js';
 import { parseCSV, parseWKT, writeCSV } from '../src/parsers/csv.js';
 import { parseEsriJSON, writeEsriJSON } from '../src/parsers/esrijson.js';
 import { parseMIF, writeMIF } from '../src/parsers/mif.js';
-import { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers } from '../src/parsers/geopackage.js';
+import { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers, initGeoPackage } from '../src/parsers/geopackage.js';
 import { writeShapefile } from '../src/parsers/shapefile-writer.js';
 import { writeTAB } from '../src/parsers/tab-writer.js';
 import {
@@ -1250,10 +1250,19 @@ test('TAB parser surfaces detected encoding in meta', () => {
 // GeoPackage Tests
 // ---------------------------------------------------------------------------
 
+// Initialize sql.js before GeoPackage tests
+let _gpkgInit: Promise<void> | null = null;
+function ensureGpkgInit(): Promise<void> {
+  if (!_gpkgInit) _gpkgInit = initGeoPackage();
+  return _gpkgInit;
+}
+
 const GPKG = path.join(DATA, 'lakes.gpkg');
 
 // Generate lakes.gpkg fixture from GeoJSON if it doesn't exist.
-function ensureGpkgFixture(): boolean {
+// Also initializes sql.js on first call.
+async function ensureGpkgFixture(): Promise<boolean> {
+  await ensureGpkgInit();
   if (fs.existsSync(GPKG)) return true;
   const geojson = parseGeoJSON(fs.readFileSync(GEOJSON));
   writeGeoPackage(geojson, { outputPath: GPKG });
@@ -1264,8 +1273,8 @@ test('detectFormat returns geopackage for .gpkg extension', () => {
   assert.equal(detectFormat('test.gpkg'), 'geopackage');
 });
 
-test('detectFormat returns geopackage for SQLite magic bytes', () => {
-  if (!ensureGpkgFixture()) return;
+test('detectFormat returns geopackage for SQLite magic bytes', async () => {
+  if (!await ensureGpkgFixture()) return;
   const fd = fs.openSync(GPKG, 'r');
   const buf = Buffer.alloc(512);
   fs.readSync(fd, buf, 0, 512, 0);
@@ -1273,8 +1282,8 @@ test('detectFormat returns geopackage for SQLite magic bytes', () => {
   assert.equal(detectFormat(GPKG), 'geopackage');
 });
 
-test('parseGeoPackage returns features from lakes.gpkg', () => {
-  if (!ensureGpkgFixture()) return;
+test('parseGeoPackage returns features from lakes.gpkg', async () => {
+  if (!await ensureGpkgFixture()) return;
   const r = parseGeoPackage(GPKG);
   assert.equal(r.features.length, 1225);
   assert.ok(r.features[0].geometry);
@@ -1283,36 +1292,36 @@ test('parseGeoPackage returns features from lakes.gpkg', () => {
   assert.ok(Array.isArray(r.meta.layers));
 });
 
-test('parseGeoPackage preserves CRS information', () => {
-  if (!ensureGpkgFixture()) return;
+test('parseGeoPackage preserves CRS information', async () => {
+  if (!await ensureGpkgFixture()) return;
   const r = parseGeoPackage(GPKG);
   assert.ok(r.crs);
   assert.ok(r.crs.properties.name);
 });
 
-test('parseGeoPackage with --layer selects specific layer', () => {
-  if (!ensureGpkgFixture()) return;
+test('parseGeoPackage with --layer selects specific layer', async () => {
+  if (!await ensureGpkgFixture()) return;
   const r = parseGeoPackage(GPKG, { layer: 'lakes' });
   assert.equal(r.features.length, 1225);
   assert.equal(r.meta?.table_name, 'lakes');
 });
 
-test('parseGeoPackageLayers returns one result per layer', () => {
-  if (!ensureGpkgFixture()) return;
+test('parseGeoPackageLayers returns one result per layer', async () => {
+  if (!await ensureGpkgFixture()) return;
   const layers = parseGeoPackageLayers(GPKG);
   assert.ok(layers.length >= 1);
   assert.equal(layers[0].features.length, 1225);
   assert.equal(layers[0].name, 'lakes');
 });
 
-test('listGeoPackageLayers returns layer names', () => {
-  if (!ensureGpkgFixture()) return;
+test('listGeoPackageLayers returns layer names', async () => {
+  if (!await ensureGpkgFixture()) return;
   const names = listGeoPackageLayers(GPKG);
   assert.ok(names.includes('lakes'));
 });
 
-test('GeoPackage round-trip preserves feature count', () => {
-  if (!ensureGpkgFixture()) return;
+test('GeoPackage round-trip preserves feature count', async () => {
+  if (!await ensureGpkgFixture()) return;
   const r = parseGeoPackage(GPKG);
   const out = path.join(tempDir(), 'roundtrip.gpkg');
   writeGeoPackage(r, { outputPath: out });
@@ -1321,8 +1330,8 @@ test('GeoPackage round-trip preserves feature count', () => {
   assert.equal(re.features[0].geometry?.type, r.features[0].geometry?.type);
 });
 
-test('GeoPackage writer creates valid gpkg with schema tables', () => {
-  if (!ensureGpkgFixture()) return;
+test('GeoPackage writer creates valid gpkg with schema tables', async () => {
+  if (!await ensureGpkgFixture()) return;
   const r = parseGeoPackage(GPKG);
   const out = path.join(tempDir(), 'schema-check.gpkg');
   writeGeoPackage(r, { outputPath: out });
@@ -1332,8 +1341,8 @@ test('GeoPackage writer creates valid gpkg with schema tables', () => {
   assert.ok(re.meta?.source === 'geopackage');
 });
 
-test('GeoPackage multi-layer round-trip', () => {
-  if (!ensureGpkgFixture()) return;
+test('GeoPackage multi-layer round-trip', async () => {
+  if (!await ensureGpkgFixture()) return;
   const dir = tempDir();
   // Create a multi-layer GeoPackage by writing two layers
   const geojson = parseGeoJSON(fs.readFileSync(GEOJSON));
@@ -1353,8 +1362,8 @@ test('GeoPackage multi-layer round-trip', () => {
   assert.equal(r2.features.length, 100);
 });
 
-test('GeoPackage features have properties', () => {
-  if (!ensureGpkgFixture()) return;
+test('GeoPackage features have properties', async () => {
+  if (!await ensureGpkgFixture()) return;
   const r = parseGeoPackage(GPKG);
   const f0 = r.features[0];
   assert.ok(Object.keys(f0.properties).length > 0);
@@ -1362,13 +1371,13 @@ test('GeoPackage features have properties', () => {
   assert.ok('_layer' in f0.properties);
 });
 
-test('GeoPackage limit option works', () => {
-  if (!ensureGpkgFixture()) return;
+test('GeoPackage limit option works', async () => {
+  if (!await ensureGpkgFixture()) return;
   const r = parseGeoPackage(GPKG, { limit: 10 });
   assert.equal(r.features.length, 10);
 });
 
-test('GeoPackage binary header with 2D envelope is parsed correctly', () => {
+test('GeoPackage binary header with 2D envelope is parsed correctly', async () => {
   // Build a geometry blob with a 2D envelope (type 1 = 32 bytes envelope).
   // Header: magic(2) + version(1) + flags(1) + srid(4) + envelope(32) = 40 bytes
   // Followed by a minimal WKB Point: endian(1) + type(4) + x(8) + y(8) = 21 bytes

@@ -352,7 +352,7 @@ test('db-export command requires a database connection', async () => {
 // GeoPackage CLI Tests
 // ---------------------------------------------------------------------------
 
-import { parseGeoPackage, writeGeoPackage } from '../src/parsers/geopackage.js';
+import { parseGeoPackage, writeGeoPackage, initGeoPackage } from '../src/parsers/geopackage.js';
 
 const GPKG = path.join('data', 'lakes.gpkg');
 
@@ -403,6 +403,7 @@ test('convert command writes GeoPackage from GeoJSON input', async () => {
   const output = path.join(dir, 'output.gpkg');
   await runCli(['convert', input, '-o', output, '--log-level', 'silent']);
   assert.ok(fs.existsSync(output), 'output gpkg should exist');
+  await initGeoPackage();
   const r = parseGeoPackage(output);
   assert.equal(r.features.length, 1225);
 });

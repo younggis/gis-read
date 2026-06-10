@@ -36,6 +36,7 @@ import {
   formatKMLPlacemarkLines,
   parseGeoPackageLayers,
   listGeoPackageLayers,
+  initGeoPackage,
   type Format,
   type DatabaseKind,
 } from './parsers/index.js';
@@ -63,8 +64,9 @@ program
   .argument('<file>', 'input file')
   .option('-f, --format <format>', 'force format')
   .option('-l, --layer <name>', 'specific layer name (for multi-layer formats)')
-  .action((file: string, opts: { format?: Format; layer?: string }) => {
+  .action(async (file: string, opts: { format?: Format; layer?: string }) => {
     const fmt = (opts.format as Format) ?? detectFormat(file);
+    if (fmt === 'geopackage') await initGeoPackage();
     const stat = fs.statSync(file);
     log.info(`File: ${path.resolve(file)}`);
     console.log(`File:      ${path.resolve(file)}`);
@@ -119,8 +121,9 @@ program
   .option('-l, --limit <n>', 'max features to print', (v) => Number(v), 0)
   .option('--layer <name>', 'specific layer name (for multi-layer formats)')
   .option('--no-pretty', 'single-line JSON output')
-  .action((file: string, opts: { format?: Format; limit: number; pretty: boolean; layer?: string }) => {
+  .action(async (file: string, opts: { format?: Format; limit: number; pretty: boolean; layer?: string }) => {
     const fmt = (opts.format as Format) ?? detectFormat(file);
+    if (fmt === 'geopackage') await initGeoPackage();
     const parseOpts: any = { limit: opts.limit };
     if (opts.layer) parseOpts.layer = opts.layer;
     const result = parseFile(file, fmt as Format, parseOpts);
@@ -147,6 +150,7 @@ program
   ) => {
     const from = (opts.from as Format) ?? detectFormat(input);
     const to = (opts.to as Format) ?? detectFormat(opts.output);
+    if (from === 'geopackage' || to === 'geopackage') await initGeoPackage();
     if (!to || to === 'unknown') {
       throw new Error(`Cannot determine output format for: ${opts.output}. Use -t/--to to specify one.`);
     }

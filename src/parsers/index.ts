@@ -121,7 +121,7 @@ export { parseCZML, convertCZML } from './czml.js';
 export { parseCSV, parseWKT, writeCSV, convertCSV } from './csv.js';
 export { parseEsriJSON, writeEsriJSON, convertEsriJSON } from './esrijson.js';
 export { parseMIF, writeMIF, convertMIF } from './mif.js';
-export { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers } from './geopackage.js';
+export { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers, initGeoPackage } from './geopackage.js';
 export type { Format } from '../format-detect.js';
 export type { Feature, FeatureCollection, Geometry, Properties, ParseOptions, ParseResult, WriteOptions } from '../types.js';
 export { Logger, log } from '../logger.js';
