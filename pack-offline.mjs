@@ -27,20 +27,11 @@ offlinePkg.main = 'dist/index.cjs';
 offlinePkg.types = 'dist/index.d.ts';
 offlinePkg.bin = { gis: 'dist/cli.cjs' };
 
-// Remove runtime dependencies (they're bundled)
-// Keep mssql/pg as optional peer dependencies
-offlinePkg.dependencies = {
-  'mssql': '^11.0.1',
-  'pg': '^8.13.1',
-};
-offlinePkg.peerDependencies = {
-  'mssql': '^11.0.1',
-  'pg': '^8.13.1',
-};
-offlinePkg.peerDependenciesMeta = {
-  'mssql': { optional: true },
-  'pg': { optional: true },
-};
+// Remove ALL dependencies — they're bundled into the CJS files.
+offlinePkg.dependencies = {};
+offlinePkg.devDependencies = {};
+delete offlinePkg.peerDependencies;
+delete offlinePkg.peerDependenciesMeta;
 
 // Add exports for both ESM and CJS
 offlinePkg.exports = {
