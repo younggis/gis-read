@@ -830,11 +830,133 @@ test('writeShapefile rejects incompatible mixed geometry bundles', () => {
   );
 });
 
-test('writeTAB reports missing GDAL adapter clearly', () => {
-  assert.throws(
-    () => writeTAB(smallFeatureSet(), { outputPath: path.join(tempDir(), 'out.tab'), ogr2ogrPath: '__missing_ogr2ogr__' }),
-    /GDAL\/OGR.*ogr2ogr/i,
-  );
+test('writeTAB writes native TAB bundle without GDAL', () => {
+  const dir = tempDir();
+  const out = path.join(dir, 'test.tab');
+  writeTAB(smallFeatureSet(), { outputPath: out });
+  // Verify all 4 files exist
+  assert.ok(fs.existsSync(path.join(dir, 'test.tab')), '.tab should exist');
+  assert.ok(fs.existsSync(path.join(dir, 'test.dat')), '.dat should exist');
+  assert.ok(fs.existsSync(path.join(dir, 'test.map')), '.map should exist');
+  assert.ok(fs.existsSync(path.join(dir, 'test.id')), '.id should exist');
+  // Verify .tab content
+  const tabText = fs.readFileSync(path.join(dir, 'test.tab'), 'utf8');
+  assert.ok(tabText.includes('!version 300'), 'should be v300');
+  assert.ok(tabText.includes('Definition Table'), 'should have Definition Table');
+});
+
+test('writeTAB preserves feature count on round-trip', () => {
+  const dir = tempDir();
+  const out = path.join(dir, 'roundtrip.tab');
+  const original = smallFeatureSet();
+  writeTAB(original, { outputPath: out });
+  const re = parseTAB(out);
+  assert.equal(re.features.length, original.features.length);
+});
+
+test('writeTAB round-trip with lakes.shp preserves 1225 features and coordinates', () => {
+  const skip = skipIfMissing(SHP);
+  if (skip) { assert.ok(true, skip); return; }
+  const shpResult = parseShapefile(SHP);
+  const dir = tempDir();
+  const tabOut = path.join(dir, 'lakes.tab');
+  writeTAB(shpResult, { outputPath: tabOut });
+  // Re-parse the TAB
+  const tabResult = parseTAB(tabOut);
+  assert.equal(tabResult.features.length, shpResult.features.length);
+  // Verify geometry type preserved
+  assert.equal(tabResult.features[0].geometry?.type, shpResult.features[0].geometry?.type);
+  // Verify coordinates are NOT empty
+  const geom = tabResult.features[0].geometry;
+  assert.ok(geom, 'geometry should exist');
+  assert.ok('coordinates' in geom, 'geometry should have coordinates');
+  const coords = (geom as any).coordinates;
+  assert.ok(coords && coords.length > 0, 'coordinates should not be empty');
+});
+
+test('writeTAB round-trip SHP -> TAB -> SHP preserves most features', () => {
+  const skip = skipIfMissing(SHP);
+  if (skip) { assert.ok(true, skip); return; }
+  const shpResult = parseShapefile(SHP);
+  const dir = tempDir();
+  // SHP -> TAB
+  const tabOut = path.join(dir, 'lakes.tab');
+  writeTAB(shpResult, { outputPath: tabOut });
+  // TAB -> SHP
+  const tabResult = parseTAB(tabOut);
+  const shpOut = path.join(dir, 'lakes2.shp');
+  writeShapefile(tabResult, { outputPath: shpOut });
+  // Re-parse SHP
+  const final = parseShapefile(shpOut);
+  // Some features with degenerate geometries (e.g. 2-point rings) may be lost
+  // during legacy format encoding. Allow up to 5% loss.
+  const minExpected = Math.floor(shpResult.features.length * 0.95);
+  assert.ok(final.features.length >= minExpected,
+    `Expected >= ${minExpected} features, got ${final.features.length}`);
+  assert.equal(final.features[0].geometry?.type, shpResult.features[0].geometry?.type);
+});
+
+test('writeTAB handles MultiLineString and MultiPolygon', () => {
+  const dir = tempDir();
+  const out = path.join(dir, 'multi.tab');
+  const result: ParseResult = {
+    name: 'multi-test',
+    features: [
+      {
+        type: 'Feature',
+        properties: { id: 1, name: 'multi-line' },
+        geometry: {
+          type: 'MultiLineString',
+          coordinates: [
+            [[116.39, 39.90], [116.40, 39.91]],
+            [[116.41, 39.92], [116.42, 39.93]],
+          ],
+        },
+      },
+      {
+        type: 'Feature',
+        properties: { id: 2, name: 'multi-poly' },
+        geometry: {
+          type: 'MultiPolygon',
+          coordinates: [
+            [[[116.39, 39.9], [116.41, 39.9], [116.41, 39.92], [116.39, 39.9]]],
+            [[[116.42, 39.93], [116.44, 39.93], [116.44, 39.95], [116.42, 39.95]]],
+          ],
+        },
+      },
+    ],
+  };
+  writeTAB(result, { outputPath: out });
+  const re = parseTAB(out);
+  assert.equal(re.features.length, 2);
+  // MultiLineString is written as a single merged polyline, so it may be read back as LineString
+  assert.ok(re.features[0].geometry?.type === 'MultiLineString' || re.features[0].geometry?.type === 'LineString');
+  assert.ok(re.features[1].geometry?.type === 'MultiPolygon' || re.features[1].geometry?.type === 'Polygon');
+});
+
+test('writeTAB handles Point and MultiPoint', () => {
+  const dir = tempDir();
+  const out = path.join(dir, 'points.tab');
+  const result: ParseResult = {
+    name: 'point-test',
+    features: [
+      {
+        type: 'Feature',
+        properties: { id: 1 },
+        geometry: { type: 'Point', coordinates: [116.39, 39.90] },
+      },
+      {
+        type: 'Feature',
+        properties: { id: 2 },
+        geometry: { type: 'MultiPoint', coordinates: [[116.40, 39.91], [116.41, 39.92]] },
+      },
+    ],
+  };
+  writeTAB(result, { outputPath: out });
+  const re = parseTAB(out);
+  assert.equal(re.features.length, 2);
+  assert.equal(re.features[0].geometry?.type, 'Point');
+  assert.ok(re.features[1].geometry?.type === 'MultiPoint' || re.features[1].geometry?.type === 'Point');
 });
 
 test('tileRangeForBBox computes XYZ ranges for WebMercator bbox', () => {

@@ -64,7 +64,7 @@ gis convert input.geojson -o output.esrijson -t esrijson
 gis convert input.geojson -o output.csv
 gis convert points.geojson -o points.shp -t shapefile
 gis convert input.geojson -o output.mif
-gis convert input.geojson -o output.tab -t tab # requires GDAL ogr2ogr
+gis convert input.geojson -o output.tab -t tab
 
 # GeoPackage (multi-layer support)
 gis info input.gpkg                          # list all layers
@@ -104,7 +104,7 @@ node dist/cli.js --help
 | Format | Extensions | Read | Write | Notes |
 | --- | --- | --- | --- | --- |
 | Shapefile | `.shp` + sidecars | Yes | Yes | Reads DBF attributes without one huge Buffer, supports Chinese field names from `.cpg` or corrected GBK/GB18030 detection, and writes `.shp/.shx/.dbf/.cpg`; one geometry family per bundle. |
-| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes* | Write requires GDAL `ogr2ogr`; reads TAB charsets, Chinese attributes, common legacy line records, v500 `0x25` point-table lines, and v300 compressed/uncompressed regions; unsupported private `.map` records may return `null`. |
+| MapInfo TAB | `.tab` + `.dat`/`.map`/`.id` | Yes | Yes | Native v300 format writing (no GDAL dependency); reads TAB charsets, Chinese attributes, common legacy line records, v500 `0x25` point-table lines, and v300 compressed/uncompressed regions; unsupported private `.map` records may return `null`. |
 | GeoJSON | `.geojson`, `.json` | Yes | Yes | Streaming input and output supported. |
 | KML | `.kml` | Yes | Yes | Supports Placemark, ExtendedData, Point, LineString, Polygon, MultiGeometry. |
 | GPX | `.gpx` | Yes | Yes | Waypoints and tracks/routes; polygon output is skipped. |
@@ -292,7 +292,7 @@ test/
 - Derived database table names must be valid identifiers: letters/numbers/underscore, not starting with a number. Chinese letters are accepted; spaces and hyphens are rejected.
 - SQL Server import/export uses the `mssql` package and supports the CommonJS default export shape used by `mssql@11`. For older SQL Server TLS setups, add `Encrypt=false` to the connection string or enable TLS 1.2 on the server; `TrustServerCertificate=true` skips certificate validation but does not disable encryption.
 - Encoding detection can recover mislabeled UTF-8 `.cpg` files and `Neutral` TAB headers when the original DBF/DAT bytes still contain Chinese text. Characters already replaced with literal `?` by the source exporter, or DBF field names truncated mid-character by the 11-byte dBASE name limit, cannot be reconstructed.
-- MapInfo TAB output delegates to GDAL `ogr2ogr`; install GDAL or write MapInfo MIF when `ogr2ogr` is unavailable.
+- MapInfo TAB output writes v300 format natively without GDAL. Multi-part geometries (MultiLineString, MultiPolygon) are merged into single objects; for true multi-part output, split into separate features.
 - CSV output stores geometry as WKT in a single `wkt` column.
 - GPX cannot represent polygons; polygon and multipolygon output is skipped.
 - KML parsing focuses on static Placemark geometry and does not cover dynamic display features such as NetworkLink, Region, and LOD.
