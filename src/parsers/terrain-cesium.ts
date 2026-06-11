@@ -228,14 +228,16 @@ function encodeQuantizedMesh(tile: TerrainTile): Buffer {
   const encodedEast = encodeIndices(eastIndices);
   const encodedNorth = encodeIndices(northIndices);
 
+  // Calculate total size
+  const indexDataSize = 4 + encodedIndices.length +
+    4 + encodedWest.length +
+    4 + encodedSouth.length +
+    4 + encodedEast.length +
+    4 + encodedNorth.length;
+
   // Build binary buffer
   const headerSize = 88;
   const vertexDataSize = 4 + vertexCount * 6; // count + u + v + h arrays
-  const indexDataSize = 4 + encodedIndices.byteLength +
-    4 + encodedWest.byteLength +
-    4 + encodedSouth.byteLength +
-    4 + encodedEast.byteLength +
-    4 + encodedNorth.byteLength;
 
   const buf = Buffer.alloc(headerSize + vertexDataSize + indexDataSize);
   let off = 0;
@@ -260,34 +262,44 @@ function encodeQuantizedMesh(tile: TerrainTile): Buffer {
   for (let i = 0; i < vertexCount; i++) { buf.writeUInt16LE(vArr[i], off); off += 2; }
   for (let i = 0; i < vertexCount; i++) { buf.writeUInt16LE(hArr[i], off); off += 2; }
 
-  // Index data
-  buf.writeUInt32LE(encodedIndices.byteLength, off); off += 4;
-  Buffer.from(encodedIndices).copy(buf, off); off += encodedIndices.byteLength;
+  // Index data: triangle count (uint32) + encoded indices
+  const triCount = indices.length / 3;
+  buf.writeUInt32LE(triCount, off); off += 4;
+  encodedIndices.copy(buf, off); off += encodedIndices.length;
 
-  // Edge indices
-  for (const edge of [encodedWest, encodedSouth, encodedEast, encodedNorth]) {
-    buf.writeUInt32LE(edge.byteLength, off); off += 4;
-    Buffer.from(edge).copy(buf, off); off += edge.byteLength;
+  // Edge indices: count (uint32) + encoded indices per edge
+  for (const [edge, edgeIndices] of [
+    [encodedWest, westIndices],
+    [encodedSouth, southIndices],
+    [encodedEast, eastIndices],
+    [encodedNorth, northIndices],
+  ] as [Buffer, number[]][]) {
+    buf.writeUInt32LE(edgeIndices.length, off); off += 4;
+    edge.copy(buf, off); off += edge.length;
   }
 
   return buf.subarray(0, off);
 }
 
-/** Encode indices using zigzag + delta encoding. */
-function encodeIndices(indices: number[]): Uint32Array {
-  const encoded = new Uint32Array(indices.length);
+/** Encode indices using zigzag + delta + varint encoding. */
+function encodeIndices(indices: number[]): Buffer {
+  const chunks: number[] = [];
   let highWaterMark = 0;
   for (let i = 0; i < indices.length; i++) {
     const index = indices[i];
     const delta = index - highWaterMark;
-    encoded[i] = zigZagEncode(delta);
+    const zigzag = (delta >> 31) ^ (delta << 1);
+    // Varint encoding (7 bits per byte, high bit = more bytes follow)
+    let v = zigzag >>> 0;
+    do {
+      let byte = v & 0x7f;
+      v >>>= 7;
+      if (v > 0) byte |= 0x80;
+      chunks.push(byte);
+    } while (v > 0);
     if (index > highWaterMark) highWaterMark = index;
   }
-  return encoded;
-}
-
-function zigZagEncode(n: number): number {
-  return (n >> 31) ^ (n << 1);
+  return Buffer.from(chunks);
 }
 
 // ---------------------------------------------------------------------------
