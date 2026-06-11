@@ -30,6 +30,7 @@ import {
   writeEsriJSON,
   writeFile,
   tileFile,
+  writeTerrainTiles,
   importFileToDatabase,
   exportDatabaseTable,
   parseGeoJSONStream,
@@ -39,6 +40,7 @@ import {
   initGeoPackage,
   type Format,
   type DatabaseKind,
+  type TerrainEncoding,
 } from './parsers/index.js';
 import { formatBytes, formatDuration, withErrorBoundary, readTextFile } from './io.js';
 import { getCRS, transformFeatures, transformGeometry, normalizeId } from './crs.js';
@@ -354,6 +356,38 @@ program
     done('Tile generation complete', {
       features: summary.featureCount,
       tiles: summary.generatedTiles,
+      minZoom: summary.minZoom,
+      maxZoom: summary.maxZoom,
+      output: path.resolve(summary.outputPath),
+    });
+  });
+
+program
+  .command('terrain')
+  .description('Generate Mapbox terrain-RGB PNG tiles from a DEM (GeoTIFF) file.')
+  .argument('<input>', 'input DEM file (.tif)')
+  .requiredOption('-o, --output <dir>', 'output XYZ tile directory')
+  .option('--min-zoom <n>', 'minimum zoom level', (v) => Number(v), 0)
+  .option('--max-zoom <n>', 'maximum zoom level', (v) => Number(v), 12)
+  .option('--encoding <fmt>', 'encoding format: terrain-rgb | terrarium', 'terrain-rgb')
+  .option('--tile-size <n>', 'tile size in pixels', (v) => Number(v), 256)
+  .option('--from-crs <crs>', 'source CRS (auto-detected from GeoTIFF)')
+  .action(async (
+    input: string,
+    opts: { output: string; minZoom: number; maxZoom: number; encoding: TerrainEncoding; tileSize: number; fromCrs?: string },
+  ) => {
+    const done = log.startTimer('terrain');
+    const summary = await writeTerrainTiles(input, {
+      outputPath: opts.output,
+      minZoom: opts.minZoom,
+      maxZoom: opts.maxZoom,
+      encoding: opts.encoding,
+      tileSize: opts.tileSize,
+      fromCrs: opts.fromCrs,
+    });
+    done('Terrain tile generation complete', {
+      tiles: summary.totalTiles,
+      emptySkipped: summary.emptyTilesSkipped,
       minZoom: summary.minZoom,
       maxZoom: summary.maxZoom,
       output: path.resolve(summary.outputPath),

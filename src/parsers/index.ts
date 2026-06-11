@@ -107,6 +107,8 @@ export async function tileFile(inputPath: string, opts: TileOptions): Promise<Ti
 
 export { writeVectorTiles, computeWebMercatorBBox, tileRangeForBBox } from './vector-tile.js';
 export type { TileOptions, TileRange, TileSummary } from './vector-tile.js';
+export { writeTerrainTiles } from './terrain-tile.js';
+export type { TerrainTileOptions, TerrainTileSummary, TerrainEncoding } from './terrain-tile.js';
 
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';

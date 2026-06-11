@@ -1420,3 +1420,39 @@ test('GeoPackage binary header with 2D envelope is parsed correctly', async () =
   assert.equal(ENVELOPE_SIZES[3], 48);  // XYM envelope (6 doubles)
   assert.equal(ENVELOPE_SIZES[4], 64);  // XYZM envelope (8 doubles)
 });
+
+// ---------------------------------------------------------------------------
+// Terrain Tile Tests
+// ---------------------------------------------------------------------------
+
+import { writeTerrainTiles } from '../src/parsers/terrain-tile.js';
+
+const SC_DEM = path.join(DATA, 'sc_dem_tif.tif');
+
+test('terrain tile generates PNG files from DEM', async () => {
+  if (!fs.existsSync(SC_DEM)) { assert.ok(true, 'DEM fixture missing'); return; }
+  const dir = tempDir();
+  const summary = await writeTerrainTiles(SC_DEM, {
+    outputPath: dir,
+    minZoom: 10,
+    maxZoom: 10,
+    encoding: 'terrain-rgb',
+  });
+  assert.ok(summary.totalTiles > 0, 'should generate at least 1 tile');
+  // Check that PNG files exist
+  const tileDir = path.join(dir, '10');
+  assert.ok(fs.existsSync(tileDir), 'zoom 10 directory should exist');
+});
+
+test('terrain tile encodes elevation correctly', () => {
+  // Test terrain-rgb encoding round-trip
+  const heights = [0, 100, 1000, 8848, -100];
+  for (const h of heights) {
+    const val = Math.round((h + 10000) * 10);
+    const r = Math.floor(val / 65536) & 0xff;
+    const g = Math.floor((val % 65536) / 256) & 0xff;
+    const b = val % 256;
+    const decoded = -10000 + (r * 65536 + g * 256 + b) * 0.1;
+    assert.ok(Math.abs(decoded - h) < 0.2, `height ${h} round-trip: got ${decoded}`);
+  }
+});

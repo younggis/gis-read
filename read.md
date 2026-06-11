@@ -78,6 +78,10 @@ gis convert input.geojson -o output.gpkg     # 写出 GeoPackage
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
 gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 
+# 从 DEM 生成地形切片（用于 MapboxGL）
+gis terrain dem.tif -o terrain --max-zoom 12
+gis terrain dem.tif -o terrain --max-zoom 10 --encoding terrarium
+
 # 数据库空间表导入/导出
 gis db-import roads.shp --db postgresql --connection "$POSTGIS_URL" --srid 4326
 gis db-import input.shp --db postgresql --connection "$POSTGIS_URL" --table public.roads --srid 4326
@@ -117,6 +121,7 @@ node dist/cli.js --help
 | MapInfo MIF | `.mif` + `.mid` | 是 | 是 | 写出文本 `.mif` 和属性 `.mid`。 |
 | GeoPackage | `.gpkg` | 是 | 是 | 支持多图层；使用 `--layer` 选择指定图层，不指定时每个图层自动导出为单独文件。也支持读取 SpatiaLite `.sqlite` 文件。 |
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | 否 | 是 | 通过 `gis tile` 生成，输入几何会统一转为 WebMercator。 |
+| Terrain-RGB tiles | `/{z}/{x}/{y}.png` | 否 | 是 | 通过 `gis terrain` 生成，读取 DEM GeoTIFF，输出 Mapbox terrain-RGB 编码的 PNG 切片。 |
 | PostgreSQL/PostGIS | geometry 表 | 是 | 是 | 通过 `ST_AsBinary` / `ST_GeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_PG_CONNECTION`。 |
 | SQL Server | geometry 表 | 是 | 是 | 通过 `STAsBinary()` / `geometry::STGeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_MSSQL_CONNECTION`。 |
 
