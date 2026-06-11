@@ -6,6 +6,8 @@ dist/
 .DS_Store
 *.tsbuildinfo
 output/
+data/
 AGENTS.md
 CLAUDE.md
 operate.mddata/sc_dem_tif.tif
+sc_dem_tif.tif
