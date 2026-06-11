@@ -230,7 +230,7 @@ program
         const result = layers[0] ?? parseFile(input, from);
         reProject(result.features as any);
         fs.mkdirSync(path.dirname(path.resolve(opts.output)), { recursive: true });
-        writeFile(result, opts.output, to as Format, { precision: opts.precision });
+        await writeFile(result, opts.output, to as Format, { precision: opts.precision });
         done(`Converted ${from} -> ${to}`, {
           features: result.features.length,
           input,
@@ -246,7 +246,7 @@ program
           const layerOutput = `${base}_${layerName}${ext}`;
           reProject(layerResult.features as any);
           fs.mkdirSync(path.dirname(path.resolve(layerOutput)), { recursive: true });
-          writeFile(layerResult, layerOutput, to as Format, { precision: opts.precision });
+          await writeFile(layerResult, layerOutput, to as Format, { precision: opts.precision });
           log.info(`  ${layerName}: ${layerResult.features.length} features -> ${path.resolve(layerOutput)}`);
           totalFeatures += layerResult.features.length;
         }
@@ -261,13 +261,20 @@ program
     }
 
     // In-memory path (single layer).
-    const parseOpts: any = {};
-    if (opts.layer) parseOpts.layer = opts.layer;
-    const result = parseFile(input, from as Format, parseOpts);
+    // FlatGeobuf uses async deserialization
+    let result;
+    if (from === 'flatgeobuf') {
+      const { parseFlatGeobuf } = await import('./parsers/flatgeobuf.js');
+      result = await parseFlatGeobuf(input);
+    } else {
+      const parseOpts: any = {};
+      if (opts.layer) parseOpts.layer = opts.layer;
+      result = parseFile(input, from as Format, parseOpts);
+    }
     reProject(result.features as any);
 
     fs.mkdirSync(path.dirname(path.resolve(opts.output)), { recursive: true });
-    writeFile(result, opts.output, to as Format, { precision: opts.precision });
+    await writeFile(result, opts.output, to as Format, { precision: opts.precision });
     done(`Converted ${from} -> ${to}`, {
       features: result.features.length,
       input: input,

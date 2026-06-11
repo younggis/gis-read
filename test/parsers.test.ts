@@ -1456,3 +1456,29 @@ test('terrain tile encodes elevation correctly', () => {
     assert.ok(Math.abs(decoded - h) < 0.2, `height ${h} round-trip: got ${decoded}`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// FlatGeobuf Tests
+// ---------------------------------------------------------------------------
+
+import { parseFlatGeobuf, writeFlatGeobuf } from '../src/parsers/flatgeobuf.js';
+
+test('FlatGeobuf round-trip preserves features', async () => {
+  const geojson = parseGeoJSON(fs.readFileSync(GEOJSON));
+  const dir = tempDir();
+  const fgbPath = path.join(dir, 'lakes.fgb');
+  await writeFlatGeobuf(geojson, { outputPath: fgbPath });
+  const result = await parseFlatGeobuf(fgbPath);
+  assert.equal(result.features.length, geojson.features.length);
+  assert.equal(result.features[0].geometry?.type, 'MultiPolygon');
+});
+
+test('FlatGeobuf preserves properties', async () => {
+  const geojson = parseGeoJSON(fs.readFileSync(GEOJSON));
+  const dir = tempDir();
+  const fgbPath = path.join(dir, 'test.fgb');
+  await writeFlatGeobuf(geojson, { outputPath: fgbPath });
+  const result = await parseFlatGeobuf(fgbPath);
+  const keys = Object.keys(result.features[0].properties).filter(k => k !== '_layer');
+  assert.ok(keys.length > 0, 'should have properties');
+});

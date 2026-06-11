@@ -72,6 +72,10 @@ gis convert input.gpkg -o output.geojson     # export all layers (one file per l
 gis convert input.gpkg -o output.geojson --layer roads  # export specific layer
 gis convert input.geojson -o output.gpkg     # write GeoPackage
 
+# FlatGeobuf
+gis convert input.geojson -o output.fgb      # write FlatGeobuf
+gis convert input.fgb -o output.geojson      # read FlatGeobuf
+
 # Generate MVT/PBF vector tiles
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
 gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
@@ -124,6 +128,7 @@ node dist/cli.js --help
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | No | Yes | Generated with `gis tile`; all input geometries are converted to WebMercator. |
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | No | Yes | Generated with `gis terrain`; reads DEM GeoTIFF, outputs Mapbox terrain-RGB encoded PNG tiles. |
 | Quantized-mesh terrain | `/{z}/{x}/{y}.terrain` | No | Yes | Generated with `gis terrain-cesium`; reads DEM GeoTIFF, outputs Cesium quantized-mesh terrain tiles with `layer.json` metadata. |
+| FlatGeobuf | `.fgb` | Yes | Yes | Performant binary format based on FlatBuffers; supports spatial indexing and streaming. |
 | PostgreSQL/PostGIS | geometry tables | Yes | Yes | Uses WKB via `ST_AsBinary` and `ST_GeomFromWKB`; connection from `--connection` or `GIS_READ_PG_CONNECTION`. |
 | SQL Server | geometry tables | Yes | Yes | Uses WKB via `STAsBinary()` and `geometry::STGeomFromWKB`; connection from `--connection` or `GIS_READ_MSSQL_CONNECTION`. |
 

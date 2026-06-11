@@ -75,7 +75,7 @@ export async function exportDatabaseTable(options: DatabaseExportOptions): Promi
   const format = options.outputFormat ?? detectFormat(outputPath);
   if (!format || format === 'unknown') throw new Error(`Cannot determine output format for: ${outputPath}`);
   const result = await readDatabaseTable(options);
-  writeFile(result, outputPath, format);
+  await writeFile(result, outputPath, format);
   return {
     db: options.db,
     table: options.table,

@@ -16,6 +16,7 @@ import { parseCSV } from './csv.js';
 import { parseEsriJSON } from './esrijson.js';
 import { parseMIF } from './mif.js';
 import { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers } from './geopackage.js';
+import { parseFlatGeobuf, writeFlatGeobuf } from './flatgeobuf.js';
 import { writeCSV } from './csv.js';
 import { writeEsriJSON } from './esrijson.js';
 import { writeGeoJSON } from './geojson.js';
@@ -56,12 +57,15 @@ export function parseFile(filePath: string, format?: Format, opts: ParseOptions 
       return parseMIF(filePath);
     case 'geopackage':
       return parseGeoPackage(filePath, opts);
+    case 'flatgeobuf':
+      // flatgeobuf uses async iteration; use dynamic import + await
+      throw new Error('FlatGeobuf requires async parsing. Use parseFlatGeobuf() directly.');
     default:
       throw new Error(`Unknown / unsupported format for: ${filePath}`);
   }
 }
 
-export function writeFile(result: ParseResult, outputPath: string, format?: Format, opts: WriteOptions = {}): void {
+export async function writeFile(result: ParseResult, outputPath: string, format?: Format, opts: WriteOptions = {}): Promise<void> {
   const fmt = format ?? detectFormat(outputPath);
   const writeOpts = { ...opts, outputPath };
   switch (fmt) {
@@ -92,8 +96,11 @@ export function writeFile(result: ParseResult, outputPath: string, format?: Form
     case 'geopackage':
       writeGeoPackage(result, writeOpts);
       return;
+    case 'flatgeobuf':
+      await writeFlatGeobuf(result, writeOpts);
+      return;
     default:
-      throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, gpx, esrijson, csv, mif, shapefile, tab, geopackage`);
+      throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, gpx, esrijson, csv, mif, shapefile, tab, geopackage, flatgeobuf`);
   }
 }
 
@@ -126,6 +133,7 @@ export { parseCSV, parseWKT, writeCSV, convertCSV } from './csv.js';
 export { parseEsriJSON, writeEsriJSON, convertEsriJSON } from './esrijson.js';
 export { parseMIF, writeMIF, convertMIF } from './mif.js';
 export { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers, initGeoPackage } from './geopackage.js';
+export { parseFlatGeobuf, writeFlatGeobuf } from './flatgeobuf.js';
 export type { Format } from '../format-detect.js';
 export type { Feature, FeatureCollection, Geometry, Properties, ParseOptions, ParseResult, WriteOptions } from '../types.js';
 export { Logger, log } from '../logger.js';

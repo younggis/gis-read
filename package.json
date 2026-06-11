@@ -53,6 +53,7 @@
   "dependencies": {
     "@tmcw/togeojson": "^7.1.2",
     "commander": "^12.1.0",
+    "flatgeobuf": "^4.4.0",
     "geotiff": "^3.0.5",
     "mssql": "^11.0.1",
     "pg": "^8.13.1",

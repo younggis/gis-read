@@ -18,6 +18,7 @@ export type Format =
   | 'esrijson'
   | 'mif'
   | 'geopackage'
+  | 'flatgeobuf'
   | 'unknown';
 
 /** Detect format from a file path. Inspects .tab and .shp companions when relevant. */
@@ -34,6 +35,7 @@ export function detectFormat(filePath: string): Format {
   if (lower.endsWith('.csv')) return 'csv';
   if (lower.endsWith('.mif')) return 'mif';
   if (lower.endsWith('.gpkg')) return 'geopackage';
+  if (lower.endsWith('.fgb')) return 'flatgeobuf';
   if (lower.endsWith('.json')) {
     // Disambiguate plain .json between geojson / topojson / esrijson / czml.
     return detectJsonVariant(filePath);
