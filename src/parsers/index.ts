@@ -109,6 +109,8 @@ export { writeVectorTiles, computeWebMercatorBBox, tileRangeForBBox } from './ve
 export type { TileOptions, TileRange, TileSummary } from './vector-tile.js';
 export { writeTerrainTiles } from './terrain-tile.js';
 export type { TerrainTileOptions, TerrainTileSummary, TerrainEncoding } from './terrain-tile.js';
+export { writeCesiumTerrain } from './terrain-cesium.js';
+export type { CesiumTerrainOptions, CesiumTerrainSummary } from './terrain-cesium.js';
 
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';

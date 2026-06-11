@@ -31,6 +31,7 @@ import {
   writeFile,
   tileFile,
   writeTerrainTiles,
+  writeCesiumTerrain,
   importFileToDatabase,
   exportDatabaseTable,
   parseGeoJSONStream,
@@ -386,6 +387,34 @@ program
       fromCrs: opts.fromCrs,
     });
     done('Terrain tile generation complete', {
+      tiles: summary.totalTiles,
+      emptySkipped: summary.emptyTilesSkipped,
+      minZoom: summary.minZoom,
+      maxZoom: summary.maxZoom,
+      output: path.resolve(summary.outputPath),
+    });
+  });
+
+program
+  .command('terrain-cesium')
+  .description('Generate Cesium quantized-mesh terrain tiles (.terrain) from a DEM (GeoTIFF) file.')
+  .argument('<input>', 'input DEM file (.tif)')
+  .requiredOption('-o, --output <dir>', 'output TMS tile directory')
+  .option('--min-zoom <n>', 'minimum zoom level', (v) => Number(v), 0)
+  .option('--max-zoom <n>', 'maximum zoom level', (v) => Number(v), 12)
+  .option('--grid-size <n>', 'vertices per tile side', (v) => Number(v), 65)
+  .action(async (
+    input: string,
+    opts: { output: string; minZoom: number; maxZoom: number; gridSize: number },
+  ) => {
+    const done = log.startTimer('terrain-cesium');
+    const summary = await writeCesiumTerrain(input, {
+      outputPath: opts.output,
+      minZoom: opts.minZoom,
+      maxZoom: opts.maxZoom,
+      gridSize: opts.gridSize,
+    });
+    done('Cesium terrain generation complete', {
       tiles: summary.totalTiles,
       emptySkipped: summary.emptyTilesSkipped,
       minZoom: summary.minZoom,
