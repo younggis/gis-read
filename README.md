@@ -76,9 +76,12 @@ gis convert input.geojson -o output.gpkg     # write GeoPackage
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
 gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 
-# Generate terrain-RGB tiles from DEM (for MapboxGL)
+# Generate terrain-RGB PNG tiles from DEM (for MapboxGL)
 gis terrain dem.tif -o terrain --max-zoom 12
 gis terrain dem.tif -o terrain --max-zoom 10 --encoding terrarium
+
+# Generate Cesium quantized-mesh terrain tiles (.terrain) from DEM
+gis terrain-cesium dem.tif -o cesium-terrain --max-zoom 12
 
 # Import/export database geometry tables
 gis db-import roads.shp --db postgresql --connection "$POSTGIS_URL" --srid 4326
@@ -120,6 +123,7 @@ node dist/cli.js --help
 | GeoPackage | `.gpkg` | Yes | Yes | Multi-layer support; `--layer` selects a specific layer; without `--layer`, each layer exports to a separate file. Also reads SpatiaLite `.sqlite` files. |
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | No | Yes | Generated with `gis tile`; all input geometries are converted to WebMercator. |
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | No | Yes | Generated with `gis terrain`; reads DEM GeoTIFF, outputs Mapbox terrain-RGB encoded PNG tiles. |
+| Quantized-mesh terrain | `/{z}/{x}/{y}.terrain` | No | Yes | Generated with `gis terrain-cesium`; reads DEM GeoTIFF, outputs Cesium quantized-mesh terrain tiles with `layer.json` metadata. |
 | PostgreSQL/PostGIS | geometry tables | Yes | Yes | Uses WKB via `ST_AsBinary` and `ST_GeomFromWKB`; connection from `--connection` or `GIS_READ_PG_CONNECTION`. |
 | SQL Server | geometry tables | Yes | Yes | Uses WKB via `STAsBinary()` and `geometry::STGeomFromWKB`; connection from `--connection` or `GIS_READ_MSSQL_CONNECTION`. |
 
