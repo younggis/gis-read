@@ -8,9 +8,20 @@ node dist/cli.js db-export --db postgresql --connection "postgres://postgres:pos
 
 node dist/cli.js convert data/lakes.shp -o output/lakes.tab
 
+
+node dist/cli.js  terrain data/sc_dem_tif.tif -o output/terrain --max-zoom 12
+node dist/cli.js  terrain-cesium data/sc_dem_tif.tif -o output/terrain --max-zoom 12
+
+node dist/cli.js convert data/lakes.shp -o output/lakes.fg
+
 git add .
 git commit -m ""
 git push origin main
 
 npm login
 npm publish --access public
+
+
+
+
+全局修改版本号为1.0.9，更新操作手册和readme文档，最终推送至git和npm

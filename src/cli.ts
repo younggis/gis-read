@@ -127,9 +127,15 @@ program
   .action(async (file: string, opts: { format?: Format; limit: number; pretty: boolean; layer?: string }) => {
     const fmt = (opts.format as Format) ?? detectFormat(file);
     if (fmt === 'geopackage') await initGeoPackage();
-    const parseOpts: any = { limit: opts.limit };
-    if (opts.layer) parseOpts.layer = opts.layer;
-    const result = parseFile(file, fmt as Format, parseOpts);
+    let result;
+    if (fmt === 'flatgeobuf') {
+      const { parseFlatGeobuf } = await import('./parsers/flatgeobuf.js');
+      result = await parseFlatGeobuf(file);
+    } else {
+      const parseOpts: any = { limit: opts.limit };
+      if (opts.layer) parseOpts.layer = opts.layer;
+      result = parseFile(file, fmt as Format, parseOpts);
+    }
     const features = opts.limit > 0 ? result.features.slice(0, opts.limit) : result.features;
     const trimmed = { ...result, features };
     process.stdout.write(JSON.stringify(trimmed, null, opts.pretty ? 2 : undefined));
