@@ -221,7 +221,15 @@ async function readSqlServerRows(connection: string, tableName: string, requeste
 
 async function importOptional(name: string, message: string): Promise<any> {
   try {
-    return await import(name);
+    const mod = await import(name);
+    // When a CJS module is loaded via dynamic import() from a bundled CJS
+    // file, Node wraps the original exports under `default` and/or
+    // `module.exports`. Unwrap so callers can use e.g. `pg.Client` directly.
+    if (mod && typeof mod === 'object') {
+      if ('module.exports' in mod && typeof mod['module.exports'] === 'object') return mod['module.exports'];
+      if ('default' in mod && typeof mod.default === 'object') return mod.default;
+    }
+    return mod;
   } catch (error) {
     if ((error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND') throw new Error(message);
     throw error;
