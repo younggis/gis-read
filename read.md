@@ -78,6 +78,10 @@ gis convert input.geojson -o output.gpkg     # 写出 GeoPackage
 gis convert input.geojson -o output.fgb      # 写出 FlatGeobuf
 gis convert input.fgb -o output.geojson      # 读取 FlatGeobuf
 
+# GML
+gis convert input.geojson -o output.gml      # 写出 GML
+gis convert input.gml -o output.geojson      # 读取 GML
+
 # 生成 MVT/PBF 矢量切片
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
 gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
@@ -141,6 +145,7 @@ node dist/cli.js --help
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | 否 | 是 | 通过 `gis terrain` 生成，读取 DEM GeoTIFF，输出 Mapbox terrain-RGB 编码的 PNG 切片。 |
 | Quantized-mesh terrain | `/{z}/{x}/{y}.terrain` | 否 | 是 | 通过 `gis terrain-cesium` 生成，读取 DEM GeoTIFF，输出 Cesium quantized-mesh 地形切片及 WebMercator `layer.json` 元数据。 |
 | FlatGeobuf | `.fgb` | 是 | 是 | 基于 FlatBuffers 的高性能二进制格式，支持空间索引和流式读取。 |
+| GML | `.gml` | 是 | 是 | OGC 地理标记语言；支持 GML 2/3 几何类型和要素集合。 |
 | PostgreSQL/PostGIS | geometry 表 | 是 | 是 | 通过 `ST_AsBinary` / `ST_GeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_PG_CONNECTION`。 |
 | SQL Server | geometry 表 | 是 | 是 | 通过 `STAsBinary()` / `geometry::STGeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_MSSQL_CONNECTION`。 |
 

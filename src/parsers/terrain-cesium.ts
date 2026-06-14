@@ -5,6 +5,7 @@
  * Pure TypeScript implementation, no GDAL dependency.
  *
  * Output: {z}/{x}/{y}.terrain directory structure (TMS scheme).
+ * Tiling scheme: EPSG:4326 (GeographicTilingScheme, 2×1 tiles at level 0).
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -15,8 +16,6 @@ import { log } from '../logger.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-const WEB_MERCATOR_MAX = 20037508.342789244;
-const WEB_MERCATOR_SIZE = WEB_MERCATOR_MAX * 2;
 const DEG_TO_RAD = Math.PI / 180;
 const WGS84_A = 6378137.0; // semi-major axis
 const WGS84_B = 6356752.314245; // semi-minor axis
@@ -40,28 +39,33 @@ function wgs84ToCartesian(lon: number, lat: number, height: number): [number, nu
   return [x, y, z];
 }
 
+/**
+ * Compute WGS84 bounding box for a tile in GeographicTilingScheme (EPSG:4326).
+ * Level 0 has 2×1 tiles. At level z: nX = 2*2^z, nY = 2^z.
+ * XYZ convention: y=0 at north pole.
+ */
 function tileBBoxWGS84(z: number, x: number, y: number): [number, number, number, number] {
-  const n = 1 << z;
-  const lonMin = (x / n) * 360 - 180;
-  const lonMax = ((x + 1) / n) * 360 - 180;
-  const latMax = (180 / Math.PI) * Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n)));
-  const latMin = (180 / Math.PI) * Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 1)) / n)));
+  const nX = 2 * (1 << z);
+  const nY = 1 << z;
+  const lonMin = (x / nX) * 360 - 180;
+  const lonMax = ((x + 1) / nX) * 360 - 180;
+  const latMax = 90 - (y / nY) * 180;
+  const latMin = 90 - ((y + 1) / nY) * 180;
   return [lonMin, latMin, lonMax, latMax];
 }
 
+/**
+ * Compute tile range (XYZ convention) for a WGS84 bbox at a given zoom level.
+ * Uses GeographicTilingScheme: level 0 has 2×1 tiles.
+ */
 function tileRangeForBBox(bbox: [number, number, number, number], z: number) {
-  const n = 1 << z;
-  const minX = Math.max(0, Math.floor(((bbox[0] + WEB_MERCATOR_MAX) / WEB_MERCATOR_SIZE) * n));
-  const maxX = Math.min(n - 1, Math.floor(((bbox[2] + WEB_MERCATOR_MAX) / WEB_MERCATOR_SIZE) * n));
-  const minY = Math.max(0, Math.floor(((WEB_MERCATOR_MAX - bbox[3]) / WEB_MERCATOR_SIZE) * n));
-  const maxY = Math.min(n - 1, Math.floor(((WEB_MERCATOR_MAX - bbox[1]) / WEB_MERCATOR_SIZE) * n));
+  const nX = 2 * (1 << z);
+  const nY = 1 << z;
+  const minX = Math.max(0, Math.floor(((bbox[0] + 180) / 360) * nX));
+  const maxX = Math.min(nX - 1, Math.floor(((bbox[2] + 180) / 360) * nX));
+  const minY = Math.max(0, Math.floor(((90 - bbox[3]) / 180) * nY));
+  const maxY = Math.min(nY - 1, Math.floor(((90 - bbox[1]) / 180) * nY));
   return { minX, maxX, minY, maxY };
-}
-
-function wgs84ToWebMercator(lon: number, lat: number): [number, number] {
-  const x = (lon / 180) * WEB_MERCATOR_MAX;
-  const y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
-  return [x, (y / 180) * WEB_MERCATOR_MAX];
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +283,7 @@ function encodeQuantizedMesh(tile: TerrainTile): Buffer {
   const horizonY = centerY / WGS84_A;
   const horizonZ = centerZ / WGS84_B;
 
-  // Quantize vertices
+  // Quantize vertices — Cesium expects [0, 32767] (maxShort = 32767)
   const sourceU = new Uint16Array(sourceVertexCount);
   const sourceV = new Uint16Array(sourceVertexCount);
   const sourceH = new Uint16Array(sourceVertexCount);
@@ -291,9 +295,9 @@ function encodeQuantizedMesh(tile: TerrainTile): Buffer {
       const lat = tile.latMax - (row / (gridSize - 1)) * latRange;
       const h = heights[idx];
 
-      sourceU[idx] = Math.round(((lon - tile.lonMin) / lonRange) * 65535);
-      sourceV[idx] = Math.round(((tile.latMax - lat) / latRange) * 65535);
-      sourceH[idx] = Math.round(((h - minHeight) / (maxHeight - minHeight)) * 65535);
+      sourceU[idx] = Math.round(((lon - tile.lonMin) / lonRange) * 32767);
+      sourceV[idx] = Math.round(((lat - tile.latMin) / latRange) * 32767);
+      sourceH[idx] = Math.round(((h - minHeight) / (maxHeight - minHeight)) * 32767);
     }
   }
 
@@ -305,8 +309,9 @@ function encodeQuantizedMesh(tile: TerrainTile): Buffer {
       const i10 = i00 + 1;
       const i01 = i00 + gridSize;
       const i11 = i01 + 1;
-      indices.push(i00, i10, i01);
-      indices.push(i10, i11, i01);
+      // Counter-clockwise winding: NW→SW→NE, NE→SW→SE
+      indices.push(i00, i01, i10);
+      indices.push(i10, i01, i11);
     }
   }
 
@@ -417,7 +422,7 @@ function buildCesiumTerrainLayerJson(options: CesiumTerrainLayerJsonOptions): Re
     format: 'quantized-mesh-1.0',
     version: '1.0.0',
     scheme: 'tms',
-    projection: 'EPSG:3857',
+    projection: 'EPSG:4326',
     minzoom: options.minZoom,
     maxzoom: options.maxZoom,
     bounds: options.bbox,
@@ -471,21 +476,15 @@ export async function writeCesiumTerrain(
   const dem = await readDEM(demPath);
   log.info(`DEM: ${dem.width}x${dem.height}, bbox=[${dem.bbox.join(', ')}]`);
 
-  // Convert DEM bbox to Web Mercator for tile range calculation
-  const wmBbox = [
-    ...wgs84ToWebMercator(dem.bbox[0], dem.bbox[1]),
-    ...wgs84ToWebMercator(dem.bbox[2], dem.bbox[3]),
-  ] as [number, number, number, number];
-
   let totalTiles = 0;
   let emptyTilesSkipped = 0;
-  // Track written tiles per zoom level for the `available` array
-  // Index = zoom level, so we need entries from 0 to maxZoom
-  const available: Array<AvailableRange[]> = [];
-  for (let z = 0; z <= maxZoom; z++) available.push([]);
+  // Track written tiles per zoom level for the `available` array.
+  // Use a Map so we only include zoom levels that actually have tiles.
+  const availableByZoom = new Map<number, AvailableRange[]>();
+  let actualMaxZoom = minZoom;
 
   for (let z = minZoom; z <= maxZoom; z++) {
-    const range = tileRangeForBBox(wmBbox, z);
+    const range = tileRangeForBBox(dem.bbox, z);
     const tileCount = (range.maxX - range.minX + 1) * (range.maxY - range.minY + 1);
     log.info(`Zoom ${z}: ${range.minX}-${range.maxX} x ${range.minY}-${range.maxY} (${tileCount} tiles)`);
 
@@ -525,7 +524,9 @@ export async function writeCesiumTerrain(
         });
 
         // Write .terrain file (TMS scheme: y is flipped)
-        const tmsY = (1 << z) - 1 - y;
+        // GeographicTilingScheme: nY = 2^z
+        const nY = 1 << z;
+        const tmsY = nY - 1 - y;
         const tileDir = path.join(opts.outputPath, String(z), String(x));
         fs.mkdirSync(tileDir, { recursive: true });
         fs.writeFileSync(path.join(tileDir, `${tmsY}.terrain`), terrain);
@@ -535,18 +536,28 @@ export async function writeCesiumTerrain(
       }
     }
 
-    // Record available range for this zoom level
-    if (writtenTiles.size > 0) available[z] = buildAvailableRanges(writtenTiles);
+    // Record available range for this zoom level (only if tiles were written)
+    if (writtenTiles.size > 0) {
+      availableByZoom.set(z, buildAvailableRanges(writtenTiles));
+      actualMaxZoom = z;
+    }
+  }
+
+  // Build compact `available` array: entries from zoom 0 to actualMaxZoom,
+  // only including levels that have tiles (empty array for gaps).
+  const available: AvailableRange[][] = [];
+  for (let z = 0; z <= actualMaxZoom; z++) {
+    available.push(availableByZoom.get(z) ?? []);
   }
 
   // Write layer.json metadata for Cesium
   const layerJson = buildCesiumTerrainLayerJson({
     minZoom,
-    maxZoom,
+    maxZoom: actualMaxZoom,
     bbox: dem.bbox,
     available,
   });
   fs.writeFileSync(path.join(opts.outputPath, 'layer.json'), JSON.stringify(layerJson, null, 2));
 
-  return { totalTiles, emptyTilesSkipped, minZoom, maxZoom, outputPath: opts.outputPath };
+  return { totalTiles, emptyTilesSkipped, minZoom, maxZoom: actualMaxZoom, outputPath: opts.outputPath };
 }

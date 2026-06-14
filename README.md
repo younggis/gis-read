@@ -76,6 +76,10 @@ gis convert input.geojson -o output.gpkg     # write GeoPackage
 gis convert input.geojson -o output.fgb      # write FlatGeobuf
 gis convert input.fgb -o output.geojson      # read FlatGeobuf
 
+# GML (Geography Markup Language)
+gis convert input.geojson -o output.gml      # write GML
+gis convert input.gml -o output.geojson      # read GML
+
 # Generate MVT/PBF vector tiles
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
 gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
@@ -139,6 +143,7 @@ node dist/cli.js --help
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | No | Yes | Generated with `gis terrain`; reads DEM GeoTIFF, outputs Mapbox terrain-RGB encoded PNG tiles. |
 | Quantized-mesh terrain | `/{z}/{x}/{y}.terrain` | No | Yes | Generated with `gis terrain-cesium`; reads DEM GeoTIFF, outputs Cesium quantized-mesh terrain tiles with adaptive mesh density and a Cesium-compatible WebMercator `layer.json` metadata file. |
 | FlatGeobuf | `.fgb` | Yes | Yes | Performant binary format based on FlatBuffers; supports spatial indexing and streaming. |
+| GML | `.gml` | Yes | Yes | OGC Geography Markup Language; supports GML 2/3 geometry types and feature collections. |
 | PostgreSQL/PostGIS | geometry tables | Yes | Yes | Uses WKB via `ST_AsBinary` and `ST_GeomFromWKB`; connection from `--connection` or `GIS_READ_PG_CONNECTION`. |
 | SQL Server | geometry tables | Yes | Yes | Uses WKB via `STAsBinary()` and `geometry::STGeomFromWKB`; connection from `--connection` or `GIS_READ_MSSQL_CONNECTION`. |
 

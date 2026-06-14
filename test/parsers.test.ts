@@ -1531,7 +1531,7 @@ test('Cesium terrain encoder writes edge indices immediately after triangle indi
   assert.equal(offset, terrain.length, 'no extra LOD count fields should be present before edge indices');
 });
 
-test('Cesium terrain layer metadata declares Web Mercator tiling', () => {
+test('Cesium terrain layer metadata declares geographic tiling', () => {
   const layerJson = buildCesiumTerrainLayerJsonForTest({
     minZoom: 0,
     maxZoom: 0,
@@ -1539,7 +1539,7 @@ test('Cesium terrain layer metadata declares Web Mercator tiling', () => {
     available: [[{ startX: 0, startY: 0, endX: 0, endY: 0 }]],
   });
 
-  assert.equal(layerJson.projection, 'EPSG:3857');
+  assert.equal(layerJson.projection, 'EPSG:4326');
   assert.equal(layerJson.scheme, 'tms');
   assert.equal(layerJson.format, 'quantized-mesh-1.0');
   assert.equal(layerJson.tilejson, '1.0');
