@@ -12,6 +12,15 @@ node dist/cli.js convert data/lakes.shp -o output/lakes.tab
 node dist/cli.js  terrain data/sc_dem_tif.tif -o output/terrain --max-zoom 12
 node dist/cli.js  terrain-cesium data/sc_dem_tif.tif -o output/terrain --max-zoom 12
 
+# 写出 GML
+node dist/cli.js convert data/lakes.geojson -o output/output.gml
+
+# 读取 GML
+node dist/cli.js convert output/output.gml -o output/output.geojson
+
+# 解析 GML
+node dist/cli.js parse output/output.gml --limit 5
+
 node dist/cli.js 3dtiles data/building.shp -o output/3dtiles --height HEIGHT --max-zoom 12
 
 node dist/cli.js convert data/lakes.shp -o output/lakes.fg
