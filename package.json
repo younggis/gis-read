@@ -53,6 +53,7 @@
   "dependencies": {
     "@tmcw/togeojson": "^7.1.2",
     "commander": "^12.1.0",
+    "earcut": "^3.0.2",
     "flatgeobuf": "^4.4.0",
     "geotiff": "^3.0.5",
     "mssql": "^11.0.1",
@@ -64,6 +65,7 @@
     "stream-json": "^3.3.0"
   },
   "devDependencies": {
+    "@types/earcut": "^3.0.0",
     "@types/node": "^22.10.0",
     "@types/pngjs": "^6.0.5",
     "@types/proj4": "^2.5.6",

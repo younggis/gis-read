@@ -1426,6 +1426,10 @@ test('GeoPackage binary header with 2D envelope is parsed correctly', async () =
 // ---------------------------------------------------------------------------
 
 import { writeTerrainTiles } from '../src/parsers/terrain-tile.js';
+import {
+  buildCesiumTerrainLayerJsonForTest,
+  encodeQuantizedMeshForTest,
+} from '../src/parsers/terrain-cesium.js';
 
 const SC_DEM = path.join(DATA, 'sc_dem_tif.tif');
 
@@ -1455,6 +1459,90 @@ test('terrain tile encodes elevation correctly', () => {
     const decoded = -10000 + (r * 65536 + g * 256 + b) * 0.1;
     assert.ok(Math.abs(decoded - h) < 0.2, `height ${h} round-trip: got ${decoded}`);
   }
+});
+
+test('Cesium terrain encoder adapts mesh density to tile complexity', () => {
+  const gridSize = 65;
+  const flatHeights = new Float64Array(gridSize * gridSize).fill(100);
+  const roughHeights = new Float64Array(gridSize * gridSize);
+  for (let row = 0; row < gridSize; row++) {
+    for (let col = 0; col < gridSize; col++) {
+      roughHeights[row * gridSize + col] = row * 25 + col * 10 + ((row + col) % 7) * 40;
+    }
+  }
+
+  const baseTile = {
+    z: 8,
+    x: 198,
+    y: 150,
+    lonMin: 98.4375,
+    latMin: 30.14512718337613,
+    lonMax: 99.84375,
+    latMax: 31.353636941500987,
+    gridSize,
+  };
+  const flat = encodeQuantizedMeshForTest({ ...baseTile, heights: flatHeights });
+  const rough = encodeQuantizedMeshForTest({ ...baseTile, heights: roughHeights });
+
+  const flatVertexCount = flat.readUInt32LE(88);
+  const roughVertexCount = rough.readUInt32LE(88);
+
+  assert.ok(flatVertexCount < roughVertexCount, `expected flat mesh to use fewer vertices than rough mesh, got ${flatVertexCount} and ${roughVertexCount}`);
+  assert.notEqual(flat.length, rough.length, 'terrain tile byte sizes should reflect mesh density, not a fixed full grid');
+});
+
+test('Cesium terrain encoder writes edge indices immediately after triangle indices', () => {
+  const gridSize = 65;
+  const heights = new Float64Array(gridSize * gridSize);
+  for (let row = 0; row < gridSize; row++) {
+    for (let col = 0; col < gridSize; col++) {
+      heights[row * gridSize + col] = row * 80 + col * 30;
+    }
+  }
+
+  const terrain = encodeQuantizedMeshForTest({
+    z: 11,
+    x: 1575,
+    y: 817,
+    lonMin: 96.85546875,
+    latMin: 35.02999636902566,
+    lonMax: 97.03125,
+    latMax: 35.17380831799959,
+    heights,
+    gridSize,
+  });
+
+  let offset = 88;
+  const vertexCount = terrain.readUInt32LE(offset); offset += 4;
+  offset += vertexCount * 6;
+  if (vertexCount > 65536 && offset % 4 !== 0) offset += 2;
+  const triangleCount = terrain.readUInt32LE(offset); offset += 4;
+  offset += triangleCount * 3 * 2;
+  if (vertexCount > 65536 && offset % 4 !== 0) offset += 2;
+
+  const edgeCounts = [];
+  for (let i = 0; i < 4; i++) {
+    const edgeCount = terrain.readUInt32LE(offset); offset += 4;
+    edgeCounts.push(edgeCount);
+    offset += edgeCount * 2;
+  }
+
+  assert.deepEqual(edgeCounts, [65, 65, 65, 65]);
+  assert.equal(offset, terrain.length, 'no extra LOD count fields should be present before edge indices');
+});
+
+test('Cesium terrain layer metadata declares Web Mercator tiling', () => {
+  const layerJson = buildCesiumTerrainLayerJsonForTest({
+    minZoom: 0,
+    maxZoom: 0,
+    bbox: [96.9, 25.7, 109.4, 35.1],
+    available: [[{ startX: 0, startY: 0, endX: 0, endY: 0 }]],
+  });
+
+  assert.equal(layerJson.projection, 'EPSG:3857');
+  assert.equal(layerJson.scheme, 'tms');
+  assert.equal(layerJson.format, 'quantized-mesh-1.0');
+  assert.equal(layerJson.tilejson, '1.0');
 });
 
 // ---------------------------------------------------------------------------

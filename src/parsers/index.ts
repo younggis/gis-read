@@ -17,6 +17,7 @@ import { parseEsriJSON } from './esrijson.js';
 import { parseMIF } from './mif.js';
 import { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers } from './geopackage.js';
 import { parseFlatGeobuf, writeFlatGeobuf } from './flatgeobuf.js';
+import { parseGML, writeGML } from './gml.js';
 import { writeCSV } from './csv.js';
 import { writeEsriJSON } from './esrijson.js';
 import { writeGeoJSON } from './geojson.js';
@@ -26,6 +27,7 @@ import { writeMIF } from './mif.js';
 import { writeShapefile } from './shapefile-writer.js';
 import { writeTAB } from './tab-writer.js';
 import { writeVectorTiles, type TileOptions, type TileSummary } from './vector-tile.js';
+import { write3DTiles, type ThreeDTilesOptions, type ThreeDTilesSummary } from './three-d-tiles.js';
 import { log, Logger } from '../logger.js';
 import { formatBytes } from '../io.js';
 
@@ -58,8 +60,9 @@ export function parseFile(filePath: string, format?: Format, opts: ParseOptions 
     case 'geopackage':
       return parseGeoPackage(filePath, opts);
     case 'flatgeobuf':
-      // flatgeobuf uses async iteration; use dynamic import + await
       throw new Error('FlatGeobuf requires async parsing. Use parseFlatGeobuf() directly.');
+    case 'gml':
+      return parseGML(fs.readFileSync(filePath));
     default:
       throw new Error(`Unknown / unsupported format for: ${filePath}`);
   }
@@ -99,8 +102,11 @@ export async function writeFile(result: ParseResult, outputPath: string, format?
     case 'flatgeobuf':
       await writeFlatGeobuf(result, writeOpts);
       return;
+    case 'gml':
+      fs.writeFileSync(outputPath, writeGML(result, opts), 'utf8');
+      return;
     default:
-      throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, gpx, esrijson, csv, mif, shapefile, tab, geopackage, flatgeobuf`);
+      throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, gpx, esrijson, csv, mif, shapefile, tab, geopackage, flatgeobuf, gml`);
   }
 }
 
@@ -112,12 +118,19 @@ export async function tileFile(inputPath: string, opts: TileOptions): Promise<Ti
   });
 }
 
+export async function threeDTilesFile(inputPath: string, opts: ThreeDTilesOptions): Promise<ThreeDTilesSummary> {
+  const result = parseFile(inputPath);
+  return write3DTiles(result, opts);
+}
+
 export { writeVectorTiles, computeWebMercatorBBox, tileRangeForBBox } from './vector-tile.js';
 export type { TileOptions, TileRange, TileSummary } from './vector-tile.js';
 export { writeTerrainTiles } from './terrain-tile.js';
 export type { TerrainTileOptions, TerrainTileSummary, TerrainEncoding } from './terrain-tile.js';
 export { writeCesiumTerrain } from './terrain-cesium.js';
 export type { CesiumTerrainOptions, CesiumTerrainSummary } from './terrain-cesium.js';
+export { write3DTiles } from './three-d-tiles.js';
+export type { ThreeDTilesOptions, ThreeDTilesSummary } from './three-d-tiles.js';
 
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';
@@ -134,6 +147,7 @@ export { parseEsriJSON, writeEsriJSON, convertEsriJSON } from './esrijson.js';
 export { parseMIF, writeMIF, convertMIF } from './mif.js';
 export { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers, initGeoPackage } from './geopackage.js';
 export { parseFlatGeobuf, writeFlatGeobuf } from './flatgeobuf.js';
+export { parseGML, writeGML } from './gml.js';
 export type { Format } from '../format-detect.js';
 export type { Feature, FeatureCollection, Geometry, Properties, ParseOptions, ParseResult, WriteOptions } from '../types.js';
 export { Logger, log } from '../logger.js';

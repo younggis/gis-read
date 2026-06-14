@@ -12,7 +12,16 @@ node dist/cli.js convert data/lakes.shp -o output/lakes.tab
 node dist/cli.js  terrain data/sc_dem_tif.tif -o output/terrain --max-zoom 12
 node dist/cli.js  terrain-cesium data/sc_dem_tif.tif -o output/terrain --max-zoom 12
 
+node dist/cli.js 3dtiles data/building.shp -o output/3dtiles --height HEIGHT --max-zoom 12
+
 node dist/cli.js convert data/lakes.shp -o output/lakes.fg
+
+node dist/cli.js 3dtiles building.shp -o output/3dtiles --height HEIGHT
+
+node dist/cli.js 3dtiles building.shp -o output/3dtiles --height HEIGHT --dem dem.tif --color "#FFE4B5"
+
+node dist/cli.js serve output/3dtiles              # 默认端口 8080
+node dist/cli.js serve output/terrain --port 3000  # 指定端口
 
 git add .
 git commit -m ""

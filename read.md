@@ -88,6 +88,16 @@ gis terrain dem.tif -o terrain --max-zoom 10 --encoding terrarium
 
 # 从 DEM 生成 Cesium 地形切片（quantized-mesh .terrain）
 gis terrain-cesium dem.tif -o cesium-terrain --max-zoom 12
+gis terrain-cesium data/sc_dem_tif.tif -o output/terrain --max-zoom 12
+
+# 从楼宇面数据生成 3D Tiles 切片（建筑白模拉伸）
+gis 3dtiles buildings.shp -o 3dtiles --height HEIGHT_FIELD
+gis 3dtiles buildings.shp -o 3dtiles --height HEIGHT --color "#FFE4B5"
+gis 3dtiles buildings.shp -o 3dtiles --height HEIGHT --dem dem.tif --max-zoom 4
+
+# 启动静态文件服务（3D Tiles、地形、PBF 切片等），支持跨域
+gis serve output/3dtiles
+gis serve output/terrain --port 3000
 
 # 数据库空间表导入/导出
 gis db-import roads.shp --db postgresql --connection "$POSTGIS_URL" --srid 4326
@@ -129,7 +139,7 @@ node dist/cli.js --help
 | GeoPackage | `.gpkg` | 是 | 是 | 支持多图层；使用 `--layer` 选择指定图层，不指定时每个图层自动导出为单独文件。也支持读取 SpatiaLite `.sqlite` 文件。 |
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | 否 | 是 | 通过 `gis tile` 生成，输入几何会统一转为 WebMercator。 |
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | 否 | 是 | 通过 `gis terrain` 生成，读取 DEM GeoTIFF，输出 Mapbox terrain-RGB 编码的 PNG 切片。 |
-| Quantized-mesh terrain | `/{z}/{x}/{y}.terrain` | 否 | 是 | 通过 `gis terrain-cesium` 生成，读取 DEM GeoTIFF，输出 Cesium quantized-mesh 地形切片及 `layer.json` 元数据。 |
+| Quantized-mesh terrain | `/{z}/{x}/{y}.terrain` | 否 | 是 | 通过 `gis terrain-cesium` 生成，读取 DEM GeoTIFF，输出 Cesium quantized-mesh 地形切片及 WebMercator `layer.json` 元数据。 |
 | FlatGeobuf | `.fgb` | 是 | 是 | 基于 FlatBuffers 的高性能二进制格式，支持空间索引和流式读取。 |
 | PostgreSQL/PostGIS | geometry 表 | 是 | 是 | 通过 `ST_AsBinary` / `ST_GeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_PG_CONNECTION`。 |
 | SQL Server | geometry 表 | 是 | 是 | 通过 `STAsBinary()` / `geometry::STGeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_MSSQL_CONNECTION`。 |

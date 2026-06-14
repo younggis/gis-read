@@ -10,6 +10,8 @@
  *   crs <file> -t <crs>       Re-project a file to another CRS in-place.
  *   crs-info <crs>            Show details for a CRS id.
  *   stream <in> -o <out>      Memory-bounded streaming conversion (GeoJSON only).
+ *   3dtiles <in> -o <dir>     Generate 3D Tiles (b3dm) from building footprints.
+ *   serve <dir>               Start a local static file server with CORS.
  *
  * Global options:
  *   --log-level <level>       debug | info | warn | error | silent (default: info)
@@ -18,6 +20,7 @@
  * All subcommands accept `-f/--format` to force a format (skips detection).
  */
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { Command, Option } from 'commander';
@@ -39,6 +42,7 @@ import {
   parseGeoPackageLayers,
   listGeoPackageLayers,
   initGeoPackage,
+  threeDTilesFile,
   type Format,
   type DatabaseKind,
   type TerrainEncoding,
@@ -437,6 +441,89 @@ program
   });
 
 program
+  .command('3dtiles')
+  .description('Generate 3D Tiles (b3dm) from building footprints with extrusion. Supports optional DEM elevation.')
+  .argument('<input>', 'input vector file with building footprints')
+  .requiredOption('-o, --output <dir>', 'output 3D Tiles directory')
+  .requiredOption('--height <field>', 'height field name (required)')
+  .option('--color <color>', 'building color as CSS color string (default: white)')
+  .option('--dem <file>', 'DEM file (GeoTIFF) for ground elevation')
+  .option('--from-crs <crs>', 'source CRS', 'WGS84')
+  .option('--max-zoom <n>', 'max spatial tiling depth', (v) => Number(v), 3)
+  .option('--max-tile-features <n>', 'max features per tile before splitting', (v) => Number(v), 500)
+  .action(async (
+    input: string,
+    opts: { output: string; height: string; color?: string; dem?: string; fromCrs: string; maxZoom: number; maxTileFeatures: number },
+  ) => {
+    const done = log.startTimer('3dtiles');
+    const color = parseColor(opts.color);
+    const summary = await threeDTilesFile(input, {
+      outputPath: opts.output,
+      heightField: opts.height,
+      color: color ?? undefined,
+      demPath: opts.dem,
+      fromCrs: opts.fromCrs,
+      maxZoom: opts.maxZoom,
+      maxFeaturesPerTile: opts.maxTileFeatures,
+    });
+    done('3D Tiles generation complete', {
+      buildings: summary.totalBuildings,
+      tiles: summary.totalTiles,
+      demUsed: summary.demUsed,
+      output: path.resolve(summary.outputPath),
+    });
+  });
+
+function parseColor(color?: string): [number, number, number, number] | null {
+  if (!color) return null;
+  // Parse CSS hex color: #RGB, #RGBA, #RRGGBB, #RRGGBBAA
+  const hex = color.replace(/^#/, '');
+  if (hex.length === 3) {
+    return [
+      parseInt(hex[0] + hex[0], 16) / 255,
+      parseInt(hex[1] + hex[1], 16) / 255,
+      parseInt(hex[2] + hex[2], 16) / 255,
+      1,
+    ];
+  }
+  if (hex.length === 4) {
+    return [
+      parseInt(hex[0] + hex[0], 16) / 255,
+      parseInt(hex[1] + hex[1], 16) / 255,
+      parseInt(hex[2] + hex[2], 16) / 255,
+      parseInt(hex[3] + hex[3], 16) / 255,
+    ];
+  }
+  if (hex.length === 6) {
+    return [
+      parseInt(hex.substring(0, 2), 16) / 255,
+      parseInt(hex.substring(2, 4), 16) / 255,
+      parseInt(hex.substring(4, 6), 16) / 255,
+      1,
+    ];
+  }
+  if (hex.length === 8) {
+    return [
+      parseInt(hex.substring(0, 2), 16) / 255,
+      parseInt(hex.substring(2, 4), 16) / 255,
+      parseInt(hex.substring(4, 6), 16) / 255,
+      parseInt(hex.substring(6, 8), 16) / 255,
+    ];
+  }
+  // Try rgba(r,g,b,a) format
+  const rgbaMatch = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/);
+  if (rgbaMatch) {
+    return [
+      parseInt(rgbaMatch[1]) / 255,
+      parseInt(rgbaMatch[2]) / 255,
+      parseInt(rgbaMatch[3]) / 255,
+      rgbaMatch[4] ? parseFloat(rgbaMatch[4]) : 1,
+    ];
+  }
+  return null;
+}
+
+program
   .command('db-import')
   .description('Import a supported vector file into a PostgreSQL/PostGIS or SQL Server geometry table.')
   .argument('<input>', 'input GIS file')
@@ -548,6 +635,132 @@ program
     console.log(`Encrypted:  ${info.encrypted}`);
     if (info.proj4) console.log(`proj4 def:  ${info.proj4}`);
   });
+
+program
+  .command('serve')
+  .description('Start a local static file server with CORS support. Useful for serving 3D Tiles, terrain, PBF tiles, etc.')
+  .argument('<dir>', 'directory to serve')
+  .option('-p, --port <n>', 'port number', (v) => Number(v), 8080)
+  .action(async (dir: string, opts: { port: number }) => {
+    const serveDir = path.resolve(dir);
+    if (!fs.existsSync(serveDir) || !fs.statSync(serveDir).isDirectory()) {
+      throw new Error(`Directory not found: ${serveDir}`);
+    }
+    const port = opts.port;
+
+    // Check if port is available
+    const available = await isPortAvailable(port);
+    if (!available) {
+      throw new Error(`Port ${port} is already in use. Choose a different port with --port.`);
+    }
+
+    const mimeTypes: Record<string, string> = {
+      '.json': 'application/json',
+      '.b3dm': 'application/octet-stream',
+      '.i3dm': 'application/octet-stream',
+      '.pnts': 'application/octet-stream',
+      '.cmpt': 'application/octet-stream',
+      '.glb': 'model/gltf-binary',
+      '.gltf': 'model/gltf+json',
+      '.terrain': 'application/vnd.quantized-mesh',
+      '.pbf': 'application/x-protobuf',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.tif': 'image/tiff',
+      '.tiff': 'image/tiff',
+      '.html': 'text/html',
+      '.css': 'text/css',
+      '.js': 'application/javascript',
+      '.mjs': 'application/javascript',
+      '.xml': 'application/xml',
+      '.kml': 'application/vnd.google-earth.kml+xml',
+      '.gpx': 'application/gpx+xml',
+      '.woff': 'font/woff',
+      '.woff2': 'font/woff2',
+    };
+
+    const server = http.createServer((req, res) => {
+      // CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', '*');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Type, Content-Length');
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      const urlPath = decodeURIComponent((req.url ?? '/').split('?')[0]);
+      const filePath = path.join(serveDir, urlPath);
+
+      // Prevent directory traversal
+      if (!filePath.startsWith(serveDir)) {
+        res.writeHead(403);
+        res.end('Forbidden');
+        return;
+      }
+
+      fs.stat(filePath, (err, stat) => {
+        if (err || !stat.isFile()) {
+          // Try index.html for directories
+          if (!err && stat.isDirectory()) {
+            const indexPath = path.join(filePath, 'index.html');
+            if (fs.existsSync(indexPath)) {
+              const ext = path.extname(indexPath).toLowerCase();
+              const contentType = mimeTypes[ext] ?? 'application/octet-stream';
+              res.writeHead(200, { 'Content-Type': contentType });
+              fs.createReadStream(indexPath).pipe(res);
+              return;
+            }
+          }
+          res.writeHead(404);
+          res.end('Not Found');
+          return;
+        }
+
+        const ext = path.extname(filePath).toLowerCase();
+        const contentType = mimeTypes[ext] ?? 'application/octet-stream';
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'Content-Length': stat.size,
+        });
+        fs.createReadStream(filePath).pipe(res);
+      });
+    });
+
+    server.listen(port, () => {
+      log.info(`Serving ${serveDir} at http://localhost:${port}`);
+      log.info('CORS enabled (Access-Control-Allow-Origin: *)');
+      log.info('Press Ctrl+C to stop.');
+    });
+
+    // Keep the process alive
+    await new Promise<void>((resolve) => {
+      process.on('SIGINT', () => {
+        server.close();
+        log.info('Server stopped.');
+        resolve();
+      });
+      process.on('SIGTERM', () => {
+        server.close();
+        resolve();
+      });
+    });
+  });
+
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = http.createServer();
+    tester.once('error', () => resolve(false));
+    tester.once('listening', () => {
+      tester.close(() => resolve(true));
+    });
+    tester.listen(port);
+  });
+}
 
 // --- Helpers for streaming writers ---------------------------------------
 
