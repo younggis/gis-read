@@ -10,7 +10,6 @@
  *   crs <file> -t <crs>       Re-project a file to another CRS in-place.
  *   crs-info <crs>            Show details for a CRS id.
  *   stream <in> -o <out>      Memory-bounded streaming conversion (GeoJSON only).
- *   3dtiles <in> -o <dir>     Generate 3D Tiles (b3dm) from building footprints.
  *   serve <dir>               Start a local static file server with CORS.
  *
  * Global options:
@@ -34,7 +33,6 @@ import {
   writeFile,
   tileFile,
   writeTerrainTiles,
-  writeCesiumTerrain,
   importFileToDatabase,
   exportDatabaseTable,
   parseGeoJSONStream,
@@ -42,7 +40,6 @@ import {
   parseGeoPackageLayers,
   listGeoPackageLayers,
   initGeoPackage,
-  threeDTilesFile,
   type Format,
   type DatabaseKind,
   type TerrainEncoding,
@@ -51,7 +48,7 @@ import { formatBytes, formatDuration, withErrorBoundary, readTextFile } from './
 import { getCRS, transformFeatures, transformGeometry, normalizeId } from './crs.js';
 import { log, Logger, type LogLevel } from './logger.js';
 
-const VERSION = '1.0.9';
+const VERSION = '1.0.10';
 
 const program = new Command();
 program
@@ -413,117 +410,6 @@ program
   });
 
 program
-  .command('terrain-cesium')
-  .description('Generate Cesium quantized-mesh terrain tiles (.terrain) from a DEM (GeoTIFF) file.')
-  .argument('<input>', 'input DEM file (.tif)')
-  .requiredOption('-o, --output <dir>', 'output TMS tile directory')
-  .option('--min-zoom <n>', 'minimum zoom level', (v) => Number(v), 0)
-  .option('--max-zoom <n>', 'maximum zoom level', (v) => Number(v), 12)
-  .option('--grid-size <n>', 'vertices per tile side', (v) => Number(v), 65)
-  .action(async (
-    input: string,
-    opts: { output: string; minZoom: number; maxZoom: number; gridSize: number },
-  ) => {
-    const done = log.startTimer('terrain-cesium');
-    const summary = await writeCesiumTerrain(input, {
-      outputPath: opts.output,
-      minZoom: opts.minZoom,
-      maxZoom: opts.maxZoom,
-      gridSize: opts.gridSize,
-    });
-    done('Cesium terrain generation complete', {
-      tiles: summary.totalTiles,
-      emptySkipped: summary.emptyTilesSkipped,
-      minZoom: summary.minZoom,
-      maxZoom: summary.maxZoom,
-      output: path.resolve(summary.outputPath),
-    });
-  });
-
-program
-  .command('3dtiles')
-  .description('Generate 3D Tiles (b3dm) from building footprints with extrusion. Supports optional DEM elevation.')
-  .argument('<input>', 'input vector file with building footprints')
-  .requiredOption('-o, --output <dir>', 'output 3D Tiles directory')
-  .requiredOption('--height <field>', 'height field name (required)')
-  .option('--color <color>', 'building color as CSS color string (default: white)')
-  .option('--dem <file>', 'DEM file (GeoTIFF) for ground elevation')
-  .option('--from-crs <crs>', 'source CRS', 'WGS84')
-  .option('--max-zoom <n>', 'max spatial tiling depth', (v) => Number(v), 3)
-  .option('--max-tile-features <n>', 'max features per tile before splitting', (v) => Number(v), 500)
-  .action(async (
-    input: string,
-    opts: { output: string; height: string; color?: string; dem?: string; fromCrs: string; maxZoom: number; maxTileFeatures: number },
-  ) => {
-    const done = log.startTimer('3dtiles');
-    const color = parseColor(opts.color);
-    const summary = await threeDTilesFile(input, {
-      outputPath: opts.output,
-      heightField: opts.height,
-      color: color ?? undefined,
-      demPath: opts.dem,
-      fromCrs: opts.fromCrs,
-      maxZoom: opts.maxZoom,
-      maxFeaturesPerTile: opts.maxTileFeatures,
-    });
-    done('3D Tiles generation complete', {
-      buildings: summary.totalBuildings,
-      tiles: summary.totalTiles,
-      demUsed: summary.demUsed,
-      output: path.resolve(summary.outputPath),
-    });
-  });
-
-function parseColor(color?: string): [number, number, number, number] | null {
-  if (!color) return null;
-  // Parse CSS hex color: #RGB, #RGBA, #RRGGBB, #RRGGBBAA
-  const hex = color.replace(/^#/, '');
-  if (hex.length === 3) {
-    return [
-      parseInt(hex[0] + hex[0], 16) / 255,
-      parseInt(hex[1] + hex[1], 16) / 255,
-      parseInt(hex[2] + hex[2], 16) / 255,
-      1,
-    ];
-  }
-  if (hex.length === 4) {
-    return [
-      parseInt(hex[0] + hex[0], 16) / 255,
-      parseInt(hex[1] + hex[1], 16) / 255,
-      parseInt(hex[2] + hex[2], 16) / 255,
-      parseInt(hex[3] + hex[3], 16) / 255,
-    ];
-  }
-  if (hex.length === 6) {
-    return [
-      parseInt(hex.substring(0, 2), 16) / 255,
-      parseInt(hex.substring(2, 4), 16) / 255,
-      parseInt(hex.substring(4, 6), 16) / 255,
-      1,
-    ];
-  }
-  if (hex.length === 8) {
-    return [
-      parseInt(hex.substring(0, 2), 16) / 255,
-      parseInt(hex.substring(2, 4), 16) / 255,
-      parseInt(hex.substring(4, 6), 16) / 255,
-      parseInt(hex.substring(6, 8), 16) / 255,
-    ];
-  }
-  // Try rgba(r,g,b,a) format
-  const rgbaMatch = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/);
-  if (rgbaMatch) {
-    return [
-      parseInt(rgbaMatch[1]) / 255,
-      parseInt(rgbaMatch[2]) / 255,
-      parseInt(rgbaMatch[3]) / 255,
-      rgbaMatch[4] ? parseFloat(rgbaMatch[4]) : 1,
-    ];
-  }
-  return null;
-}
-
-program
   .command('db-import')
   .description('Import a supported vector file into a PostgreSQL/PostGIS or SQL Server geometry table.')
   .argument('<input>', 'input GIS file')
@@ -656,13 +542,8 @@ program
 
     const mimeTypes: Record<string, string> = {
       '.json': 'application/json',
-      '.b3dm': 'application/octet-stream',
-      '.i3dm': 'application/octet-stream',
-      '.pnts': 'application/octet-stream',
-      '.cmpt': 'application/octet-stream',
       '.glb': 'model/gltf-binary',
       '.gltf': 'model/gltf+json',
-      '.terrain': 'application/vnd.quantized-mesh',
       '.pbf': 'application/x-protobuf',
       '.png': 'image/png',
       '.jpg': 'image/jpeg',

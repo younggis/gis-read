@@ -27,7 +27,6 @@ import { writeMIF } from './mif.js';
 import { writeShapefile } from './shapefile-writer.js';
 import { writeTAB } from './tab-writer.js';
 import { writeVectorTiles, type TileOptions, type TileSummary } from './vector-tile.js';
-import { write3DTiles, type ThreeDTilesOptions, type ThreeDTilesSummary } from './three-d-tiles.js';
 import { log, Logger } from '../logger.js';
 import { formatBytes } from '../io.js';
 
@@ -118,19 +117,10 @@ export async function tileFile(inputPath: string, opts: TileOptions): Promise<Ti
   });
 }
 
-export async function threeDTilesFile(inputPath: string, opts: ThreeDTilesOptions): Promise<ThreeDTilesSummary> {
-  const result = parseFile(inputPath);
-  return write3DTiles(result, opts);
-}
-
 export { writeVectorTiles, computeWebMercatorBBox, tileRangeForBBox } from './vector-tile.js';
 export type { TileOptions, TileRange, TileSummary } from './vector-tile.js';
 export { writeTerrainTiles } from './terrain-tile.js';
 export type { TerrainTileOptions, TerrainTileSummary, TerrainEncoding } from './terrain-tile.js';
-export { writeCesiumTerrain } from './terrain-cesium.js';
-export type { CesiumTerrainOptions, CesiumTerrainSummary } from './terrain-cesium.js';
-export { write3DTiles } from './three-d-tiles.js';
-export type { ThreeDTilesOptions, ThreeDTilesSummary } from './three-d-tiles.js';
 
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';

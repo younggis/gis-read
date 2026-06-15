@@ -10,7 +10,6 @@ node dist/cli.js convert data/lakes.shp -o output/lakes.tab
 
 
 node dist/cli.js  terrain data/sc_dem_tif.tif -o output/terrain --max-zoom 12
-node dist/cli.js  terrain-cesium data/sc_dem_tif.tif -o output/terrain --max-zoom 12
 
 # 写出 GML
 node dist/cli.js convert data/lakes.geojson -o output/output.gml
@@ -21,16 +20,9 @@ node dist/cli.js convert output/output.gml -o output/output.geojson
 # 解析 GML
 node dist/cli.js parse output/output.gml --limit 5
 
-node dist/cli.js 3dtiles data/building.shp -o output/3dtiles --height HEIGHT --max-zoom 12
-
 node dist/cli.js convert data/lakes.shp -o output/lakes.fg
 
-node dist/cli.js 3dtiles building.shp -o output/3dtiles --height HEIGHT
-
-node dist/cli.js 3dtiles building.shp -o output/3dtiles --height HEIGHT --dem dem.tif --color "#FFE4B5"
-
-node dist/cli.js serve output/3dtiles              # 默认端口 8080
-node dist/cli.js serve output/terrain --port 3000  # 指定端口
+node dist/cli.js serve output/terrain --port 9095  # 指定端口
 
 git add .
 git commit -m ""
@@ -42,4 +34,4 @@ npm publish --access public
 
 
 
-全局修改版本号为1.0.9，更新操作手册和readme文档，最终推送至git和npm
+全局修改版本号为1.0.10，更新操作手册和readme文档，最终推送至git和npm
