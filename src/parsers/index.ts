@@ -7,6 +7,7 @@ import type { ParseOptions, ParseResult, WriteOptions } from '../types.js';
 import { detectFormat } from '../format-detect.js';
 import { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream } from './geojson.js';
 import { parseKML } from './kml.js';
+import { parseKMZ } from './kmz.js';
 import { parseShapefile } from './shapefile.js';
 import { parseTAB } from './tab.js';
 import { parseGPX } from './gpx.js';
@@ -40,6 +41,8 @@ export function parseFile(filePath: string, format?: Format, opts: ParseOptions 
       return parseGeoJSON(fs.readFileSync(filePath));
     case 'kml':
       return parseKML(fs.readFileSync(filePath));
+    case 'kmz':
+      return parseKMZ(filePath);
     case 'shapefile':
       return parseShapefile(filePath, opts);
     case 'tab':
@@ -125,6 +128,7 @@ export type { TerrainTileOptions, TerrainTileSummary, TerrainEncoding } from './
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';
 export { parseKML, writeKML, convertKML, formatKMLPlacemarkLines } from './kml.js';
+export { parseKMZ } from './kmz.js';
 export { parseShapefile } from './shapefile.js';
 export { writeShapefile } from './shapefile-writer.js';
 export { parseTAB } from './tab.js';
@@ -152,6 +156,7 @@ export {
   validateDatabaseIdentifier,
   validateDatabaseTableName,
 } from '../database/index.js';
+export { defaultDbNameFromUri, parseMongoTarget } from '../database/mongodb.js';
 export type {
   DatabaseConnectionOptions,
   DatabaseExportOptions,

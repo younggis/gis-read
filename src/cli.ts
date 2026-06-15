@@ -48,7 +48,7 @@ import { formatBytes, formatDuration, withErrorBoundary, readTextFile } from './
 import { getCRS, transformFeatures, transformGeometry, normalizeId } from './crs.js';
 import { log, Logger, type LogLevel } from './logger.js';
 
-const VERSION = '1.0.10';
+const VERSION = '1.0.11';
 
 const program = new Command();
 program
@@ -411,15 +411,17 @@ program
 
 program
   .command('db-import')
-  .description('Import a supported vector file into a PostgreSQL/PostGIS or SQL Server geometry table.')
+  .description('Import a supported vector file into a PostgreSQL/PostGIS, SQL Server, or MongoDB collection.')
   .argument('<input>', 'input GIS file')
-  .requiredOption('--db <db>', 'database type: postgresql or sqlserver')
+  .requiredOption('--db <db>', 'database type: postgresql, sqlserver, or mongodb')
   .option('--connection <connection>', 'database connection string')
-  .option('--table <schema.table>', 'target table name; defaults to the input filename without extension')
-  .option('--geom-column <name>', 'geometry column name', 'geom')
+  .option('--table <schema.table>', 'target table or collection name; defaults to the input filename without extension')
+  .option('--geom-column <name>', 'geometry column name (postgresql/sqlserver only)', 'geom')
   .option('--srid <n>', 'target geometry SRID', (v) => Number(v), 4326)
   .option('--from-crs <crs>', 'source CRS before optional reprojection')
   .option('--to-crs <crs>', 'target CRS before import')
+  .option('--db-name <name>', 'MongoDB database name; overrides the db inferred from the connection URI')
+  .option('--drop', 'MongoDB only: drop the target collection before insert')
   .action(async (
     input: string,
     opts: {
@@ -430,6 +432,8 @@ program
       srid: number;
       fromCrs?: string;
       toCrs?: string;
+      dbName?: string;
+      drop?: boolean;
     },
   ) => {
     const done = log.startTimer('db-import');
@@ -441,6 +445,8 @@ program
       srid: opts.srid,
       fromCrs: opts.fromCrs,
       toCrs: opts.toCrs,
+      dbName: opts.dbName,
+      drop: opts.drop,
     });
     done('Database import complete', {
       db: summary.db,
@@ -453,14 +459,15 @@ program
 
 program
   .command('db-export')
-  .description('Export a PostgreSQL/PostGIS or SQL Server geometry table to a supported vector file.')
-  .requiredOption('--db <db>', 'database type: postgresql or sqlserver')
+  .description('Export a PostgreSQL/PostGIS, SQL Server, or MongoDB collection to a supported vector file.')
+  .requiredOption('--db <db>', 'database type: postgresql, sqlserver, or mongodb')
   .option('--connection <connection>', 'database connection string')
-  .requiredOption('--table <schema.table>', 'source table name')
+  .requiredOption('--table <schema.table|db.collection>', 'source table or collection name')
   .option('-o, --output <file>', 'output vector file; defaults to <table>.geojson')
   .option('-t, --to <format>', 'force output format')
   .option('--geom-column <name>', 'geometry column name; auto-detected when omitted')
-  .option('--where <sql>', 'optional SQL WHERE clause without the WHERE keyword')
+  .option('--where <sql>', 'optional SQL WHERE clause without the WHERE keyword (postgresql/sqlserver only)')
+  .option('--db-name <name>', 'MongoDB database name; overrides the db inferred from the connection URI')
   .action(async (opts: {
     db: DatabaseKind;
     connection?: string;
@@ -469,6 +476,7 @@ program
     to?: Format;
     geomColumn?: string;
     where?: string;
+    dbName?: string;
   }) => {
     const done = log.startTimer('db-export');
     const summary = await exportDatabaseTable({
@@ -479,6 +487,7 @@ program
       outputFormat: opts.to,
       geomColumn: opts.geomColumn,
       where: opts.where,
+      dbName: opts.dbName,
     });
     done('Database export complete', {
       db: summary.db,
@@ -673,8 +682,8 @@ function esc(s: string): string {
 }
 
 function normalizeDbKind(db: string): DatabaseKind {
-  if (db === 'postgresql' || db === 'sqlserver') return db;
-  throw new Error(`Unsupported database "${db}". Use postgresql or sqlserver.`);
+  if (db === 'postgresql' || db === 'sqlserver' || db === 'mongodb') return db;
+  throw new Error(`Unsupported database "${db}". Use postgresql, sqlserver, or mongodb.`);
 }
 
 // --- Main: route through error boundary -----------------------------------

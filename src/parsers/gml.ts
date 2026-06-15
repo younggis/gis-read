@@ -289,10 +289,12 @@ function parseGmlGeometry(node: XMLNode): Geometry | null {
           if (geom?.type === 'Polygon') polys.push(geom.coordinates as number[][][]);
         }
       }
-      // Also direct Polygon children
-      for (const pg of findAll(node, 'Polygon')) {
-        const geom = parseGmlGeometry(pg);
-        if (geom?.type === 'Polygon') polys.push(geom.coordinates as number[][][]);
+      // Also direct Polygon children (no surfaceMember wrapper)
+      for (const pg of node.children) {
+        if (stripNS(pg.name) === 'Polygon') {
+          const geom = parseGmlGeometry(pg);
+          if (geom?.type === 'Polygon') polys.push(geom.coordinates as number[][][]);
+        }
       }
       if (polys.length === 1) return { type: 'Polygon', coordinates: polys[0] };
       return polys.length > 1 ? { type: 'MultiPolygon', coordinates: polys } : null;
@@ -307,9 +309,12 @@ function parseGmlGeometry(node: XMLNode): Geometry | null {
           if (coords.length >= 2) lines.push(coords);
         }
       }
-      for (const ls of findAll(node, 'LineString')) {
-        const coords = readCoords(ls);
-        if (coords.length >= 2) lines.push(coords);
+      // Also direct LineString children (no curveMember wrapper)
+      for (const ls of node.children) {
+        if (stripNS(ls.name) === 'LineString') {
+          const coords = readCoords(ls);
+          if (coords.length >= 2) lines.push(coords);
+        }
       }
       if (lines.length === 1) return { type: 'LineString', coordinates: lines[0] };
       return lines.length > 1 ? { type: 'MultiLineString', coordinates: lines } : null;

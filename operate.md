@@ -34,4 +34,4 @@ npm publish --access public
 
 
 
-全局修改版本号为1.0.10，更新操作手册和readme文档，最终推送至git和npm
+全局修改版本号为1.0.11，更新操作手册和readme文档，最终推送至git和npm

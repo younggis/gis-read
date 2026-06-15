@@ -18,11 +18,18 @@ import {
   normalizeTableName as normalizeSqlServerTableName,
 } from './sqlserver.js';
 import {
+  defaultDbNameFromUri,
+  dropMongoCollection,
+  exportMongoCollection,
+  importMongoCollection,
+  parseMongoTarget,
+} from './mongodb.js';
+import {
   inferDatabaseOutputPathFromTable,
   inferDatabaseTableNameFromPath,
 } from './naming.js';
 
-export type DatabaseKind = 'postgresql' | 'sqlserver';
+export type DatabaseKind = 'postgresql' | 'sqlserver' | 'mongodb';
 
 export interface DatabaseConnectionOptions {
   db: DatabaseKind;
@@ -35,6 +42,10 @@ export interface DatabaseImportOptions extends DatabaseConnectionOptions {
   srid?: number;
   fromCrs?: string;
   toCrs?: string;
+  /** MongoDB only: explicit database name. Overrides the database inferred from the connection URI. */
+  dbName?: string;
+  /** MongoDB only: if true, drop the target collection before insert (default false). */
+  drop?: boolean;
 }
 
 export interface DatabaseExportOptions extends DatabaseConnectionOptions {
@@ -43,6 +54,8 @@ export interface DatabaseExportOptions extends DatabaseConnectionOptions {
   outputFormat?: Format;
   geomColumn?: string;
   where?: string;
+  /** MongoDB only: explicit database name. */
+  dbName?: string;
 }
 
 export interface DatabaseTransferSummary {
@@ -93,13 +106,27 @@ export async function writeDatabaseTable(result: ParseResult, options: DatabaseI
   if (options.toCrs && sourceCrs !== options.toCrs) transformFeatures(features as any, sourceCrs, options.toCrs);
   const columns = inferDatabaseColumns(features);
   const connection = resolveConnection(options);
-  if (options.db === 'postgresql') await writePostgresTable(connection, options.table, columns, geomColumn, srid, features);
-  else await writeSqlServerTable(connection, options.table, columns, geomColumn, srid, features);
-  return { db: options.db, table: options.table, featureCount: features.length, geomColumn, srid };
+  if (options.db === 'postgresql') {
+    await writePostgresTable(connection, options.table, columns, geomColumn, srid, features);
+    return { db: options.db, table: options.table, featureCount: features.length, geomColumn, srid };
+  }
+  if (options.db === 'sqlserver') {
+    await writeSqlServerTable(connection, options.table, columns, geomColumn, srid, features);
+    return { db: options.db, table: options.table, featureCount: features.length, geomColumn, srid };
+  }
+  // MongoDB: store as GeoJSON documents, no WKB / SRS concept.
+  const target = parseMongoTarget(options.table, options.dbName ?? defaultDbNameFromUri(connection));
+  if (options.drop) await dropMongoCollection(connection, target);
+  const { inserted } = await importMongoCollection(connection, target, features);
+  return { db: options.db, table: options.table, featureCount: inserted, geomColumn: 'geometry' };
 }
 
 export async function readDatabaseTable(options: DatabaseExportOptions): Promise<ParseResult> {
   const connection = resolveConnection(options);
+  if (options.db === 'mongodb') {
+    const target = parseMongoTarget(options.table, options.dbName ?? defaultDbNameFromUri(connection));
+    return exportMongoCollection(connection, target);
+  }
   const result = options.db === 'postgresql'
     ? await readPostgresRows(connection, options.table, options.geomColumn, options.where)
     : await readSqlServerRows(connection, options.table, options.geomColumn, options.where);
@@ -112,10 +139,13 @@ export async function readDatabaseTable(options: DatabaseExportOptions): Promise
 }
 
 function resolveConnection(options: DatabaseConnectionOptions): string {
-  const connection = options.connection
-    || (options.db === 'postgresql' ? process.env.GIS_READ_PG_CONNECTION : process.env.GIS_READ_MSSQL_CONNECTION);
+  const envName = options.db === 'postgresql'
+    ? 'GIS_READ_PG_CONNECTION'
+    : options.db === 'sqlserver'
+      ? 'GIS_READ_MSSQL_CONNECTION'
+      : 'GIS_READ_MONGO_CONNECTION';
+  const connection = options.connection || process.env[envName];
   if (!connection) {
-    const envName = options.db === 'postgresql' ? 'GIS_READ_PG_CONNECTION' : 'GIS_READ_MSSQL_CONNECTION';
     throw new Error(`Database connection is required. Pass --connection or set ${envName}.`);
   }
   return connection;

@@ -22,6 +22,8 @@ import { parseCZML } from '../src/parsers/czml.js';
 import { parseCSV, parseWKT, writeCSV } from '../src/parsers/csv.js';
 import { parseEsriJSON, writeEsriJSON } from '../src/parsers/esrijson.js';
 import { parseMIF, writeMIF } from '../src/parsers/mif.js';
+import { parseGML, writeGML } from '../src/parsers/gml.js';
+import { parseKMZ } from '../src/parsers/kmz.js';
 import { parseGeoPackage, parseGeoPackageLayers, writeGeoPackage, listGeoPackageLayers, initGeoPackage } from '../src/parsers/geopackage.js';
 import { writeShapefile } from '../src/parsers/shapefile-writer.js';
 import { writeTAB } from '../src/parsers/tab-writer.js';
@@ -30,7 +32,7 @@ import {
   tileRangeForBBox,
   writeVectorTiles,
 } from '../src/parsers/vector-tile.js';
-import { detectFormat } from '../src/format-detect.js';
+import { detectFormat, detectFormatFromBuffer } from '../src/format-detect.js';
 import {
   transformCoord,
   transformGeometry,
@@ -1481,4 +1483,398 @@ test('FlatGeobuf preserves properties', async () => {
   const result = await parseFlatGeobuf(fgbPath);
   const keys = Object.keys(result.features[0].properties).filter(k => k !== '_layer');
   assert.ok(keys.length > 0, 'should have properties');
+});
+
+// --- GML ----------------------------------------------------------------
+
+test('parseGML reads FeatureCollection with featureMember and posList', () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<gml:FeatureCollection xmlns:gml="http://www.opengis.net/gml/3.2">
+  <gml:featureMember>
+    <gml:_Feature>
+      <gml:OBJECTID>1</gml:OBJECTID>
+      <gml:name>Lake A</gml:name>
+      <gml:geometryProperty>
+        <gml:Polygon>
+          <gml:exterior>
+            <gml:LinearRing>
+              <gml:posList>100.5 30.5 100.6 30.5 100.6 30.6 100.5 30.6 100.5 30.5</gml:posList>
+            </gml:LinearRing>
+          </gml:exterior>
+        </gml:Polygon>
+      </gml:geometryProperty>
+    </gml:_Feature>
+  </gml:featureMember>
+</gml:FeatureCollection>`;
+  const r = parseGML(xml);
+  assert.equal(r.features.length, 1);
+  assert.equal(r.features[0].properties.OBJECTID, 1);
+  assert.equal(r.features[0].properties.name, 'Lake A');
+  assert.equal(r.features[0].geometry?.type, 'Polygon');
+  const ring = (r.features[0].geometry as any).coordinates[0];
+  assert.equal(ring.length, 5);
+  assert.deepEqual(ring[0], ring[ring.length - 1], 'exterior ring should be closed');
+  assert.deepEqual(ring[0], [100.5, 30.5]);
+});
+
+test('parseGML reads featureMembers (plural) container with multiple features', () => {
+  const xml = `<?xml version="1.0"?>
+<gml:FeatureCollection xmlns:gml="http://www.opengis.net/gml/3.2">
+  <gml:featureMembers>
+    <gml:_Feature>
+      <gml:name>P</gml:name>
+      <gml:geometryProperty>
+        <gml:Point><gml:pos>1 2</gml:pos></gml:Point>
+      </gml:geometryProperty>
+    </gml:_Feature>
+    <gml:_Feature>
+      <gml:name>L</gml:name>
+      <gml:geometryProperty>
+        <gml:LineString><gml:posList>3 4 5 6</gml:posList></gml:LineString>
+      </gml:geometryProperty>
+    </gml:_Feature>
+  </gml:featureMembers>
+</gml:FeatureCollection>`;
+  const r = parseGML(xml);
+  assert.equal(r.features.length, 2);
+  assert.equal(r.features[0].geometry?.type, 'Point');
+  assert.deepEqual((r.features[0].geometry as any).coordinates, [1, 2]);
+  assert.equal(r.features[1].geometry?.type, 'LineString');
+  assert.equal((r.features[1].geometry as any).coordinates.length, 2);
+});
+
+test('parseGML parses gml:coordinates (GML 2 comma-separated)', () => {
+  const xml = `<?xml version="1.0"?>
+<gml:FeatureCollection xmlns:gml="http://www.opengis.net/gml/3.2">
+  <gml:featureMember>
+    <gml:_Feature>
+      <gml:geometryProperty>
+        <gml:LineString>
+          <gml:coordinates>1.0,2.0 3.0,4.0 5.0,6.0</gml:coordinates>
+        </gml:LineString>
+      </gml:geometryProperty>
+    </gml:_Feature>
+  </gml:featureMember>
+</gml:FeatureCollection>`;
+  const r = parseGML(xml);
+  assert.equal(r.features[0].geometry?.type, 'LineString');
+  const coords = (r.features[0].geometry as any).coordinates;
+  assert.equal(coords.length, 3);
+  assert.deepEqual(coords[0], [1.0, 2.0]);
+  assert.deepEqual(coords[1], [3.0, 4.0]);
+  assert.deepEqual(coords[2], [5.0, 6.0]);
+});
+
+test('parseGML handles gml:pos (single point) inside gml:Point', () => {
+  const xml = `<?xml version="1.0"?>
+<gml:FeatureCollection xmlns:gml="http://www.opengis.net/gml/3.2">
+  <gml:featureMember>
+    <gml:_Feature>
+      <gml:geometryProperty>
+        <gml:Point><gml:pos>10.5 20.5</gml:pos></gml:Point>
+      </gml:geometryProperty>
+    </gml:_Feature>
+  </gml:featureMember>
+</gml:FeatureCollection>`;
+  const r = parseGML(xml);
+  assert.equal(r.features[0].geometry?.type, 'Point');
+  assert.deepEqual((r.features[0].geometry as any).coordinates, [10.5, 20.5]);
+});
+
+test('parseGML extracts MultiPoint, MultiLineString, MultiPolygon', () => {
+  const xml = `<?xml version="1.0"?>
+<gml:FeatureCollection xmlns:gml="http://www.opengis.net/gml/3.2">
+  <gml:featureMember>
+    <gml:_Feature>
+      <gml:geometryProperty>
+        <gml:MultiPoint>
+          <gml:pointMember><gml:Point><gml:pos>1 1</gml:pos></gml:Point></gml:pointMember>
+          <gml:pointMember><gml:Point><gml:pos>2 2</gml:pos></gml:Point></gml:pointMember>
+        </gml:MultiPoint>
+      </gml:geometryProperty>
+    </gml:_Feature>
+  </gml:featureMember>
+  <gml:featureMember>
+    <gml:_Feature>
+      <gml:geometryProperty>
+        <gml:MultiLineString>
+          <gml:curveMember>
+            <gml:LineString><gml:posList>0 0 1 1</gml:posList></gml:LineString>
+          </gml:curveMember>
+          <gml:curveMember>
+            <gml:LineString><gml:posList>2 2 3 3</gml:posList></gml:LineString>
+          </gml:curveMember>
+        </gml:MultiLineString>
+      </gml:geometryProperty>
+    </gml:_Feature>
+  </gml:featureMember>
+  <gml:featureMember>
+    <gml:_Feature>
+      <gml:geometryProperty>
+        <gml:MultiSurface>
+          <gml:surfaceMember>
+            <gml:Polygon>
+              <gml:exterior><gml:LinearRing><gml:posList>0 0 1 0 1 1 0 0</gml:posList></gml:LinearRing></gml:exterior>
+            </gml:Polygon>
+          </gml:surfaceMember>
+          <gml:surfaceMember>
+            <gml:Polygon>
+              <gml:exterior><gml:LinearRing><gml:posList>5 5 6 5 6 6 5 5</gml:posList></gml:LinearRing></gml:exterior>
+            </gml:Polygon>
+          </gml:surfaceMember>
+        </gml:MultiSurface>
+      </gml:geometryProperty>
+    </gml:_Feature>
+  </gml:featureMember>
+</gml:FeatureCollection>`;
+  const r = parseGML(xml);
+  assert.equal(r.features.length, 3);
+  const types = new Set(r.features.map((f) => f.geometry?.type));
+  assert.ok(types.has('MultiPoint'));
+  assert.ok(types.has('MultiLineString'));
+  assert.ok(types.has('MultiPolygon'));
+  // Regression: surfaceMember-wrapped polygons must not be double-counted
+  // (findAll recurses into surfaceMember's children, so the explicit Polygon
+  // search must skip surfaceMember descendants).
+  const mp = r.features[2].geometry as any;
+  assert.equal(mp.coordinates.length, 2, 'MultiSurface with 2 surfaceMembers should yield exactly 2 polygons');
+  const ml = r.features[1].geometry as any;
+  assert.equal(ml.coordinates.length, 2, 'MultiLineString with 2 curveMembers should yield exactly 2 lines');
+});
+
+test('parseGML returns empty features for non-GML XML without throwing', () => {
+  const r = parseGML('<root><foo>bar</foo></root>');
+  assert.equal(r.features.length, 0);
+  assert.equal(r.meta?.source, 'gml');
+});
+
+test('writeGML produces parseable FeatureCollection output', () => {
+  const input: ParseResult = {
+    name: 'test',
+    features: [
+      {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [10.5, 20.5] },
+        properties: { name: 'hello', count: 7 },
+      },
+    ],
+    meta: { source: 'gml' },
+  };
+  const text = writeGML(input);
+  assert.ok(text.includes('<gml:FeatureCollection'), 'should emit FeatureCollection root');
+  assert.ok(text.includes('<gml:featureMember'), 'should emit featureMember wrapper');
+  assert.ok(text.includes('<gml:_feature>'), 'should emit _feature inner wrapper');
+  assert.ok(text.includes('<gml:geometryProperty'), 'should wrap geometry in geometryProperty');
+  const re = parseGML(text);
+  assert.equal(re.features.length, 1);
+  assert.equal(re.features[0].geometry?.type, 'Point');
+  assert.deepEqual((re.features[0].geometry as any).coordinates, [10.5, 20.5]);
+  assert.equal(re.features[0].properties.name, 'hello');
+});
+
+test('writeGML then parseGML round-trip preserves MultiPolygon member count', () => {
+  const input: ParseResult = {
+    name: 'mp',
+    features: [
+      {
+        type: 'Feature',
+        geometry: {
+          type: 'MultiPolygon',
+          coordinates: [
+            [[[0, 0], [1, 0], [1, 1], [0, 0]]],
+            [[[5, 5], [6, 5], [6, 6], [5, 5]]],
+          ],
+        },
+        properties: { id: 'A' },
+      },
+    ],
+  };
+  const text = writeGML(input);
+  const re = parseGML(text);
+  assert.equal(re.features.length, 1);
+  assert.equal(re.features[0].geometry?.type, 'MultiPolygon');
+  assert.equal((re.features[0].geometry as any).coordinates.length, 2);
+});
+
+test('writeGML emits MultiCurve for MultiLineString and MultiSurface for MultiPolygon', () => {
+  const ml: ParseResult = {
+    features: [
+      {
+        type: 'Feature',
+        geometry: { type: 'MultiLineString', coordinates: [[[0, 0], [1, 1]], [[2, 2], [3, 3]]] },
+        properties: {},
+      },
+    ],
+  };
+  const mp: ParseResult = {
+    features: [
+      {
+        type: 'Feature',
+        geometry: { type: 'MultiPolygon', coordinates: [[[[0, 0], [1, 0], [0, 0]]]] },
+        properties: {},
+      },
+    ],
+  };
+  const mlText = writeGML(ml);
+  const mpText = writeGML(mp);
+  assert.ok(mlText.includes('<gml:MultiCurve'), 'MultiLineString should serialize as MultiCurve');
+  assert.ok(mlText.includes('<gml:curveMember'), 'MultiCurve should use curveMember');
+  assert.ok(mpText.includes('<gml:MultiSurface'), 'MultiPolygon should serialize as MultiSurface');
+  assert.ok(mpText.includes('<gml:surfaceMember'), 'MultiSurface should use surfaceMember');
+});
+
+// --- KMZ -----------------------------------------------------------------
+
+test('detectFormat classifies .kmz extension as kmz', () => {
+  assert.equal(detectFormat('archive.kmz'), 'kmz');
+});
+
+test('detectFormatFromBuffer recognizes ZIP magic bytes as kmz', () => {
+  // 'PK\x03\x04' is the ZIP local file header signature.
+  const buf = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]);
+  assert.equal(detectFormatFromBuffer(buf), 'kmz');
+});
+
+test('parseKMZ reads doc.kml inside a ZIP archive', async () => {
+  const AdmZip = (await import('adm-zip')).default;
+  const kmlText = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Placemark>
+    <name>KMZ Point</name>
+    <Point><coordinates>1.0,2.0</coordinates></Point>
+  </Placemark>
+  <Placemark>
+    <name>KMZ Line</name>
+    <LineString><coordinates>3,4 5,6</coordinates></LineString>
+  </Placemark>
+</kml>`;
+  const zip = new AdmZip();
+  zip.addFile('doc.kml', Buffer.from(kmlText, 'utf8'));
+  const zipBuf = zip.toBuffer();
+
+  const r = parseKMZ(zipBuf);
+  assert.equal(r.features.length, 2);
+  assert.equal(r.features[0].geometry?.type, 'Point');
+  assert.deepEqual((r.features[0].geometry as any).coordinates, [1, 2]);
+  assert.equal(r.features[1].geometry?.type, 'LineString');
+  assert.equal(r.meta?.source, 'kmz');
+});
+
+test('parseKMZ falls back to the first .kml entry when doc.kml is missing', async () => {
+  const AdmZip = (await import('adm-zip')).default;
+  const kmlText = `<?xml version="1.0"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Placemark><name>Fallback</name>
+    <Point><coordinates>10,20</coordinates></Point>
+  </Placemark>
+</kml>`;
+  const zip = new AdmZip();
+  zip.addFile('root.kml', Buffer.from(kmlText, 'utf8'));
+  const r = parseKMZ(zip.toBuffer());
+  assert.equal(r.features.length, 1);
+  assert.deepEqual((r.features[0].geometry as any).coordinates, [10, 20]);
+});
+
+test('parseKMZ throws when no .kml entry exists', async () => {
+  const AdmZip = (await import('adm-zip')).default;
+  const zip = new AdmZip();
+  zip.addFile('image.png', Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  assert.throws(() => parseKMZ(zip.toBuffer()), /does not contain a \.kml entry/);
+});
+
+test('parseKMZ on a real file path works via parseFile', async () => {
+  const AdmZip = (await import('adm-zip')).default;
+  const dir = tempDir();
+  const kmzPath = path.join(dir, 'sample.kmz');
+  const kmlText = `<?xml version="1.0"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Placemark><name>Hello</name>
+    <Point><coordinates>100.5,30.5</coordinates></Point>
+  </Placemark>
+</kml>`;
+  const zip = new AdmZip();
+  zip.addFile('doc.kml', Buffer.from(kmlText, 'utf8'));
+  fs.writeFileSync(kmzPath, zip.toBuffer());
+
+  const { parseFile } = await import('../src/parsers/index.js');
+  const r = parseFile(kmzPath);
+  assert.equal(r.features.length, 1);
+  assert.equal(r.features[0].geometry?.type, 'Point');
+  assert.deepEqual((r.features[0].geometry as any).coordinates, [100.5, 30.5]);
+});
+
+// --- MongoDB ------------------------------------------------------------
+
+import { defaultDbNameFromUri, parseMongoTarget } from '../src/parsers/index.js';
+
+test('parseMongoTarget splits db.collection and accepts plain collection', () => {
+  const a = parseMongoTarget('myCollection');
+  assert.equal(a.dbName, undefined);
+  assert.equal(a.collection, 'myCollection');
+
+  const b = parseMongoTarget('myDb.myCollection');
+  assert.equal(b.dbName, 'myDb');
+  assert.equal(b.collection, 'myCollection');
+
+  const c = parseMongoTarget('myCollection', 'overrideDb');
+  assert.equal(c.dbName, 'overrideDb');
+  assert.equal(c.collection, 'myCollection');
+});
+
+test('parseMongoTarget rejects malformed names', () => {
+  assert.throws(() => parseMongoTarget(''));
+  assert.throws(() => parseMongoTarget('a.b.c'));
+  assert.throws(() => parseMongoTarget('1bad'));
+});
+
+test('defaultDbNameFromUri extracts the default database from a mongodb URI', () => {
+  assert.equal(defaultDbNameFromUri('mongodb://localhost:27017'), undefined);
+  assert.equal(defaultDbNameFromUri('mongodb://localhost:27017/'), undefined);
+  assert.equal(defaultDbNameFromUri('mongodb://localhost:27017/gisdb'), 'gisdb');
+  assert.equal(defaultDbNameFromUri('mongodb://localhost:27017/gisdb?replicaSet=rs0'), 'gisdb');
+  // 'admin' is treated as no explicit db so callers can still override.
+  assert.equal(defaultDbNameFromUri('mongodb://localhost:27017/admin'), undefined);
+});
+
+test('defaultDbNameFromUri returns undefined for invalid URIs', () => {
+  assert.equal(defaultDbNameFromUri('not a url'), undefined);
+});
+
+test('MongoDB import/export round-trip via in-memory MongoClient mock', async () => {
+  // No live MongoDB available in CI; only run if a connection string is set.
+  const uri = process.env.GIS_READ_MONGO_CONNECTION;
+  if (!uri) return; // soft-skip
+  const { writeDatabaseTable, exportDatabaseTable } = await import('../src/parsers/index.js');
+  const collectionName = `gis_read_test_${Date.now()}`;
+  const input: ParseResult = {
+    features: [
+      {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [100.5, 30.5] },
+        properties: { name: 'A', value: 1 },
+      },
+      {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [101.5, 31.5] },
+        properties: { name: 'B', value: 2 },
+      },
+    ],
+    meta: { source: 'geojson' },
+  };
+  await writeDatabaseTable(input, {
+    db: 'mongodb',
+    connection: uri,
+    table: collectionName,
+    dbName: process.env.GIS_READ_MONGO_DB,
+    drop: true,
+  });
+  const out = await exportDatabaseTable({
+    db: 'mongodb',
+    connection: uri,
+    table: collectionName,
+    dbName: process.env.GIS_READ_MONGO_DB,
+    outputPath: path.join(tempDir(), `${collectionName}.geojson`),
+  });
+  assert.equal(out.features.length, 2);
+  assert.equal(out.features[0].geometry?.type, 'Point');
 });

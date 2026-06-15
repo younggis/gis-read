@@ -1,6 +1,6 @@
 # gis-read
 
-当前版本：`1.0.10`
+当前版本：`1.0.11`
 
 中文 | [English](./README.md)
 
@@ -8,11 +8,11 @@
 
 ## 功能特性
 
-- 解析 Shapefile、MapInfo TAB、GeoJSON、KML、GPX、TopoJSON、CZML、CSV/WKT、ESRI JSON、MapInfo MIF、GeoPackage。
-- 支持把输入格式转换为 GeoJSON、KML、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF、GeoPackage。MapInfo TAB 写出依赖本机安装 GDAL `ogr2ogr`。
+- 解析 Shapefile、MapInfo TAB、GeoJSON、KML、KMZ、GPX、TopoJSON、CZML、CSV/WKT、ESRI JSON、MapInfo MIF、GeoPackage、FlatGeobuf、GML、MongoDB 集合。
+- 支持把输入格式转换为 GeoJSON、KML、KMZ（仅读取）、GPX、ESRI JSON、CSV/WKT、Shapefile、MapInfo MIF、GeoPackage、FlatGeobuf、GML、MongoDB。MapInfo TAB 写出依赖本机安装 GDAL `ogr2ogr`。
 - 支持大 GeoJSON 流式转换到 GeoJSON/KML/GPX，避免一次性加载完整文件。
 - 支持从现有输入格式生成标准 XYZ Mapbox Vector Tile (`.pbf`) 矢量切片目录。
-- 支持把矢量文件导入 PostgreSQL/PostGIS 或 SQL Server geometry 表，也支持把数据库空间表导出为矢量文件。
+- 支持把矢量文件导入 PostgreSQL/PostGIS、SQL Server、MongoDB，也支持把数据库空间表/集合导出为矢量文件。
 - Shapefile 的 DBF 属性表按记录读取，支持超过 2 GiB 的 DBF 文件，并会按 `.cpg` 或错误 `.cpg` 纠偏后的内容检测解码中文字段名。
 - 保留常见元数据，例如 CRS、bbox、属性字段和格式相关 meta。
 - 支持 WGS84、WebMercator、CGCS2000、GCJ-02、BD-09，以及 `EPSG:xxxx` 坐标转换。
@@ -82,6 +82,9 @@ gis convert input.fgb -o output.geojson      # 读取 FlatGeobuf
 gis convert input.geojson -o output.gml      # 写出 GML
 gis convert input.gml -o output.geojson      # 读取 GML
 
+# KMZ (Keyhole Markup Language Zipped)
+gis convert input.kmz -o output.geojson       # 读取 KMZ（写出为 GeoJSON）
+
 # 生成 MVT/PBF 矢量切片
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
 gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
@@ -99,6 +102,11 @@ gis db-import roads.shp --db postgresql --connection "$POSTGIS_URL" --srid 4326
 gis db-import input.shp --db postgresql --connection "$POSTGIS_URL" --table public.roads --srid 4326
 gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads
 gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads -o roads.shp -t shapefile
+
+# MongoDB 导入/导出（GeoJSON 集合）
+gis db-import input.geojson --db mongodb --connection "$MONGO_URI" --table gis.features
+gis db-export --db mongodb --connection "$MONGO_URI" --table gis.features -o output.geojson
+gis db-import input.shp --db mongodb --connection "$MONGO_URI" --db-name mydb --drop
 
 # 大 GeoJSON 流式转换
 gis stream big.geojson -o big.kml
@@ -136,7 +144,9 @@ node dist/cli.js --help
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | 否 | 是 | 通过 `gis terrain` 生成，读取 DEM GeoTIFF，输出 Mapbox terrain-RGB 编码的 PNG 切片。 |
 | FlatGeobuf | `.fgb` | 是 | 是 | 基于 FlatBuffers 的高性能二进制格式，支持空间索引和流式读取。 |
 | GML | `.gml` | 是 | 是 | OGC 地理标记语言；支持 GML 2/3 几何类型和要素集合。 |
+| KMZ | `.kmz` | 是 | 否 | ZIP 包含 `doc.kml`；KML 被提取并复用 KML 解析器处理。写出需手动打包 ZIP。 |
 | PostgreSQL/PostGIS | geometry 表 | 是 | 是 | 通过 `ST_AsBinary` / `ST_GeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_PG_CONNECTION`。 |
+| MongoDB | GeoJSON 集合 | 是 | 是 | 要素以 GeoJSON Feature 形式存储；支持 `db.collection` 或显式 `--db-name`。 |
 | SQL Server | geometry 表 | 是 | 是 | 通过 `STAsBinary()` / `geometry::STGeomFromWKB` 读写 WKB；连接来自 `--connection` 或 `GIS_READ_MSSQL_CONNECTION`。 |
 
 ## Node.js 库用法

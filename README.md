@@ -6,11 +6,11 @@
 
 ## Features
 
-- Parse Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV/WKT, ESRI JSON, MapInfo MIF, and GeoPackage.
-- Convert supported inputs to GeoJSON, KML, GPX, ESRI JSON, CSV/WKT, Shapefile, MapInfo MIF, or GeoPackage. MapInfo TAB writing is available when GDAL `ogr2ogr` is installed.
+- Parse Shapefile, MapInfo TAB, GeoJSON, KML, KMZ, GPX, TopoJSON, CZML, CSV/WKT, ESRI JSON, MapInfo MIF, GeoPackage, FlatGeobuf, GML, and MongoDB collections.
+- Convert supported inputs to GeoJSON, KML, KMZ (read-only), GPX, ESRI JSON, CSV/WKT, Shapefile, MapInfo MIF, GeoPackage, FlatGeobuf, GML, or MongoDB. MapInfo TAB writing is available when GDAL `ogr2ogr` is installed.
 - Stream large GeoJSON files to GeoJSON/KML/GPX without loading the whole file into memory.
 - Generate standard XYZ Mapbox Vector Tile (`.pbf`) directories from supported vector inputs.
-- Import vector files into PostgreSQL/PostGIS or SQL Server geometry tables, and export geometry tables back to vector files.
+- Import vector files into PostgreSQL/PostGIS, SQL Server, or MongoDB, and export geometry tables/collections back to vector files.
 - Read Shapefile DBF attributes record-by-record, including DBF files larger than 2 GiB, and decode Chinese field names from `.cpg` or corrected content detection when `.cpg` is mislabeled.
 - Preserve common metadata such as CRS, bbox, attributes, and parser-specific details.
 - Transform coordinates between WGS84, WebMercator, CGCS2000, GCJ-02, BD-09, and supported `EPSG:xxxx` definitions.
@@ -80,6 +80,9 @@ gis convert input.fgb -o output.geojson      # read FlatGeobuf
 gis convert input.geojson -o output.gml      # write GML
 gis convert input.gml -o output.geojson      # read GML
 
+# KMZ (Keyhole Markup Language Zipped)
+gis convert input.kmz -o output.geojson       # read KMZ (writes to GeoJSON)
+
 # Generate MVT/PBF vector tiles
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
 gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
@@ -97,6 +100,11 @@ gis db-import roads.shp --db postgresql --connection "$POSTGIS_URL" --srid 4326
 gis db-import input.shp --db postgresql --connection "$POSTGIS_URL" --table public.roads --srid 4326
 gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads
 gis db-export --db sqlserver --connection "$MSSQL_URL" --table dbo.roads -o roads.shp -t shapefile
+
+# MongoDB import/export (GeoJSON collections)
+gis db-import input.geojson --db mongodb --connection "$MONGO_URI" --table gis.features
+gis db-export --db mongodb --connection "$MONGO_URI" --table gis.features -o output.geojson
+gis db-import input.shp --db mongodb --connection "$MONGO_URI" --db-name mydb --drop
 
 # Stream large GeoJSON files
 gis stream big.geojson -o big.kml
@@ -134,7 +142,9 @@ node dist/cli.js --help
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | No | Yes | Generated with `gis terrain`; reads DEM GeoTIFF, outputs Mapbox terrain-RGB encoded PNG tiles. |
 | FlatGeobuf | `.fgb` | Yes | Yes | Performant binary format based on FlatBuffers; supports spatial indexing and streaming. |
 | GML | `.gml` | Yes | Yes | OGC Geography Markup Language; supports GML 2/3 geometry types and feature collections. |
+| KMZ | `.kmz` | Yes | No | ZIP archive containing `doc.kml`; KML is extracted and parsed using the same KML handler. |
 | PostgreSQL/PostGIS | geometry tables | Yes | Yes | Uses WKB via `ST_AsBinary` and `ST_GeomFromWKB`; connection from `--connection` or `GIS_READ_PG_CONNECTION`. |
+| MongoDB | GeoJSON collections | Yes | Yes | Stores features as GeoJSON documents; supports `db.collection` or explicit `--db-name`. |
 | SQL Server | geometry tables | Yes | Yes | Uses WKB via `STAsBinary()` and `geometry::STGeomFromWKB`; connection from `--connection` or `GIS_READ_MSSQL_CONNECTION`. |
 
 ## Library Usage

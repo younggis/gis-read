@@ -10,6 +10,7 @@ export type Format =
   | 'shapefile'
   | 'geojson'
   | 'kml'
+  | 'kmz'
   | 'tab'
   | 'gpx'
   | 'topojson'
@@ -29,6 +30,7 @@ export function detectFormat(filePath: string): Format {
   if (lower.endsWith('.shp')) return 'shapefile';
   if (lower.endsWith('.geojson')) return 'geojson';
   if (lower.endsWith('.kml')) return 'kml';
+  if (lower.endsWith('.kmz')) return 'kmz';
   if (lower.endsWith('.tab')) return 'tab';
   if (lower.endsWith('.gpx')) return 'gpx';
   if (lower.endsWith('.topojson')) return 'topojson';
@@ -84,6 +86,9 @@ export function detectFormatFromBuffer(buf: Buffer): Format {
 
   // KML begins with "<?xml" or "<kml".
   if (head.startsWith('<?xml') || /<kml[\s>]/.test(head)) return 'kml';
+
+  // ZIP / KMZ local file header magic: 0x504B0304 ('PK\x03\x04').
+  if (buf.length >= 4 && buf.readUInt32LE(0) === 0x04034b50) return 'kmz';
 
   // MIF begins with "Version" header.
   if (/^Version\s+\d+/i.test(head)) return 'mif';

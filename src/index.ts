@@ -11,6 +11,7 @@ export {
   writeKML,
   convertKML,
   formatKMLPlacemarkLines,
+  parseKMZ,
   parseShapefile,
   writeShapefile,
   parseTAB,
