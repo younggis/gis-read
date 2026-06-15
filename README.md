@@ -82,6 +82,7 @@ gis convert input.gml -o output.geojson      # read GML
 
 # KMZ (Keyhole Markup Language Zipped)
 gis convert input.kmz -o output.geojson       # read KMZ (writes to GeoJSON)
+gis convert input.geojson -o output.kmz      # write KMZ (repacks doc.kml into ZIP)
 
 # Generate MVT/PBF vector tiles
 gis tile input.shp -o tiles --min-zoom 8 --max-zoom 14
@@ -142,7 +143,7 @@ node dist/cli.js --help
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | No | Yes | Generated with `gis terrain`; reads DEM GeoTIFF, outputs Mapbox terrain-RGB encoded PNG tiles. |
 | FlatGeobuf | `.fgb` | Yes | Yes | Performant binary format based on FlatBuffers; supports spatial indexing and streaming. |
 | GML | `.gml` | Yes | Yes | OGC Geography Markup Language; supports GML 2/3 geometry types and feature collections. |
-| KMZ | `.kmz` | Yes | No | ZIP archive containing `doc.kml`; KML is extracted and parsed using the same KML handler. |
+| KMZ | `.kmz` | Yes | Yes | ZIP archive containing `doc.kml`; KML is extracted and parsed using the same KML handler. Writing repacks `doc.kml` into a ZIP. |
 | PostgreSQL/PostGIS | geometry tables | Yes | Yes | Uses WKB via `ST_AsBinary` and `ST_GeomFromWKB`; connection from `--connection` or `GIS_READ_PG_CONNECTION`. |
 | MongoDB | GeoJSON collections | Yes | Yes | Stores features as GeoJSON documents; supports `db.collection` or explicit `--db-name`. |
 | SQL Server | geometry tables | Yes | Yes | Uses WKB via `STAsBinary()` and `geometry::STGeomFromWKB`; connection from `--connection` or `GIS_READ_MSSQL_CONNECTION`. |

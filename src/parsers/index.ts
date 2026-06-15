@@ -6,8 +6,8 @@ import type { Format } from '../format-detect.js';
 import type { ParseOptions, ParseResult, WriteOptions } from '../types.js';
 import { detectFormat } from '../format-detect.js';
 import { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream } from './geojson.js';
-import { parseKML } from './kml.js';
-import { parseKMZ } from './kmz.js';
+import { parseKML, writeKML } from './kml.js';
+import { parseKMZ, writeKMZ } from './kmz.js';
 import { parseShapefile } from './shapefile.js';
 import { parseTAB } from './tab.js';
 import { parseGPX } from './gpx.js';
@@ -23,7 +23,6 @@ import { writeCSV } from './csv.js';
 import { writeEsriJSON } from './esrijson.js';
 import { writeGeoJSON } from './geojson.js';
 import { writeGPX } from './gpx.js';
-import { writeKML } from './kml.js';
 import { writeMIF } from './mif.js';
 import { writeShapefile } from './shapefile-writer.js';
 import { writeTAB } from './tab-writer.js';
@@ -107,8 +106,11 @@ export async function writeFile(result: ParseResult, outputPath: string, format?
     case 'gml':
       fs.writeFileSync(outputPath, writeGML(result, opts), 'utf8');
       return;
+    case 'kmz':
+      fs.writeFileSync(outputPath, writeKMZ(result, opts), 'binary');
+      return;
     default:
-      throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, gpx, esrijson, csv, mif, shapefile, tab, geopackage, flatgeobuf, gml`);
+      throw new Error(`Writing to format "${fmt}" is not supported. Try: geojson, kml, kmz, gpx, esrijson, csv, mif, shapefile, tab, geopackage, flatgeobuf, gml`);
   }
 }
 
@@ -128,7 +130,7 @@ export type { TerrainTileOptions, TerrainTileSummary, TerrainEncoding } from './
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';
 export { parseKML, writeKML, convertKML, formatKMLPlacemarkLines } from './kml.js';
-export { parseKMZ } from './kmz.js';
+export { parseKMZ, writeKMZ } from './kmz.js';
 export { parseShapefile } from './shapefile.js';
 export { writeShapefile } from './shapefile-writer.js';
 export { parseTAB } from './tab.js';

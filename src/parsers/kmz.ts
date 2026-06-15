@@ -1,5 +1,5 @@
 /**
- * KMZ (Keyhole Markup Language Zipped) parser.
+ * KMZ (Keyhole Markup Language Zipped) parser and writer.
  *
  * KMZ is a ZIP archive that bundles a `doc.kml` file (the root KML document)
  * with optional overlay images and resources. We extract the KML payload and
@@ -11,8 +11,8 @@
  */
 import * as fs from 'node:fs';
 import AdmZip from 'adm-zip';
-import type { ParseResult } from '../types.js';
-import { parseKML } from './kml.js';
+import type { Feature, Geometry, ParseResult, Properties, WriteOptions } from '../types.js';
+import { parseKML, writeKML } from './kml.js';
 
 const ROOT_KML_NAME = 'doc.kml';
 
@@ -45,4 +45,11 @@ export function parseKMZ(filePath: string | Buffer): ParseResult {
   // Override the source so callers can tell which container the data came from.
   result.meta = { ...(result.meta ?? {}), source: 'kmz' };
   return result;
+}
+
+export function writeKMZ(result: ParseResult, opts: WriteOptions = {}): Buffer {
+  const kmlText = writeKML(result, opts);
+  const zip = new AdmZip();
+  zip.addFile(ROOT_KML_NAME, Buffer.from(kmlText, 'utf8'));
+  return zip.toBuffer();
 }

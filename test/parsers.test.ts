@@ -1803,6 +1803,53 @@ test('parseKMZ on a real file path works via parseFile', async () => {
   assert.deepEqual((r.features[0].geometry as any).coordinates, [100.5, 30.5]);
 });
 
+test('writeKMZ produces a ZIP archive containing doc.kml', async () => {
+  const { writeKMZ } = await import('../src/parsers/kmz.js');
+  const { parseKML } = await import('../src/parsers/kml.js');
+  const input: ParseResult = {
+    features: [
+      { type: 'Feature', geometry: { type: 'Point', coordinates: [1, 2] }, properties: { name: 'A' } },
+      { type: 'Feature', geometry: { type: 'LineString', coordinates: [[3, 4], [5, 6]] }, properties: { name: 'B' } },
+    ],
+    meta: { source: 'kml' },
+  };
+  const buf = writeKMZ(input);
+  assert.ok(buf instanceof Buffer);
+  const AdmZip = (await import('adm-zip')).default;
+  const zip = new AdmZip(buf);
+  const entries = zip.getEntries();
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].entryName, 'doc.kml');
+  const kmlText = zip.readAsText(entries[0]);
+  assert.ok(kmlText.includes('<name>A</name>'));
+  assert.ok(kmlText.includes('<name>B</name>'));
+  // Round-trip: read KMZ → compare features
+  const r = parseKML(kmlText);
+  assert.equal(r.features.length, 2);
+  assert.equal(r.features[0].properties?.name, 'A');
+  assert.equal(r.features[1].properties?.name, 'B');
+});
+
+test('writeKMZ writes via parseFile and converts from GeoJSON', async () => {
+  const { parseFile, writeFile } = await import('../src/parsers/index.js');
+  const dir = tempDir();
+  const geoPath = path.join(dir, 'test.geojson');
+  const kmzPath = path.join(dir, 'test.kmz');
+  fs.writeFileSync(geoPath, JSON.stringify({
+    type: 'FeatureCollection',
+    features: [
+      { type: 'Feature', geometry: { type: 'Point', coordinates: [100, 30] }, properties: { id: 1 } },
+    ],
+  }), 'utf8');
+  await writeFile(parseFile(geoPath), kmzPath, 'kmz');
+  assert.ok(fs.existsSync(kmzPath));
+  const { parseKMZ } = await import('../src/parsers/kmz.js');
+  const r = parseKMZ(kmzPath);
+  assert.equal(r.features.length, 1);
+  assert.deepEqual((r.features[0].geometry as any).coordinates, [100, 30]);
+  assert.equal(r.features[0].properties?.id, 1);
+});
+
 // --- MongoDB ------------------------------------------------------------
 
 import { defaultDbNameFromUri, parseMongoTarget } from '../src/parsers/index.js';
