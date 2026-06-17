@@ -49,7 +49,7 @@ import { formatBytes, formatDuration, withErrorBoundary, readTextFile } from './
 import { getCRS, transformFeatures, transformGeometry, normalizeId } from './crs.js';
 import { log, Logger, type LogLevel } from './logger.js';
 
-const VERSION = '1.0.11';
+const VERSION = '1.1.0';
 
 const program = new Command();
 program
