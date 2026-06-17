@@ -85,7 +85,7 @@ function wgs84ToWebMercator(lon: number, lat: number): [number, number] {
 // DEM reader
 // ---------------------------------------------------------------------------
 
-interface DEMData {
+export interface DEMData {
   width: number;
   height: number;
   bbox: [number, number, number, number]; // WGS84 [minX, minY, maxX, maxY]
@@ -94,7 +94,7 @@ interface DEMData {
   srsId: number; // EPSG code
 }
 
-async function readDEM(filePath: string): Promise<DEMData> {
+export async function readDEM(filePath: string): Promise<DEMData> {
   const tiff = await fromFile(filePath);
   const image = await tiff.getImage();
 
@@ -123,7 +123,7 @@ async function readDEM(filePath: string): Promise<DEMData> {
 // ---------------------------------------------------------------------------
 
 /** Sample DEM at a given geographic coordinate using bilinear interpolation. */
-function sampleDEM(dem: DEMData, lon: number, lat: number): number {
+export function sampleDEM(dem: DEMData, lon: number, lat: number): number {
   // Convert lon/lat to pixel coordinates
   const px = ((lon - dem.bbox[0]) / (dem.bbox[2] - dem.bbox[0])) * (dem.width - 1);
   const py = ((dem.bbox[3] - lat) / (dem.bbox[3] - dem.bbox[1])) * (dem.height - 1);
@@ -154,7 +154,7 @@ function sampleDEM(dem: DEMData, lon: number, lat: number): number {
   return v0 * (1 - fy) + v1 * fy;
 }
 
-function getElevation(dem: DEMData, x: number, y: number): number {
+export function getElevation(dem: DEMData, x: number, y: number): number {
   if (x < 0 || x >= dem.width || y < 0 || y >= dem.height) return 0;
   const idx = y * dem.width + x;
   const val = dem.data[idx];

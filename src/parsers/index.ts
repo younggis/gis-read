@@ -126,6 +126,8 @@ export { writeVectorTiles, computeWebMercatorBBox, tileRangeForBBox } from './ve
 export type { TileOptions, TileRange, TileSummary } from './vector-tile.js';
 export { writeTerrainTiles } from './terrain-tile.js';
 export type { TerrainTileOptions, TerrainTileSummary, TerrainEncoding } from './terrain-tile.js';
+export { writeQuantizedMeshTiles } from './quantized-mesh.js';
+export type { QuantizedMeshOptions, QuantizedMeshSummary } from './quantized-mesh.js';
 
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';

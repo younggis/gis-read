@@ -33,6 +33,7 @@ import {
   writeFile,
   tileFile,
   writeTerrainTiles,
+  writeQuantizedMeshTiles,
   importFileToDatabase,
   exportDatabaseTable,
   parseGeoJSONStream,
@@ -533,7 +534,7 @@ program
 
 program
   .command('serve')
-  .description('Start a local static file server with CORS support. Useful for serving 3D Tiles, terrain, PBF tiles, etc.')
+  .description('Start a local static file server with CORS support. Useful for serving terrain, PBF tiles, etc.')
   .argument('<dir>', 'directory to serve')
   .option('-p, --port <n>', 'port number', (v) => Number(v), 8080)
   .action(async (dir: string, opts: { port: number }) => {
