@@ -35,6 +35,9 @@ python output/serve_terrain.py output/buildings --port 8080
 
 python shp_to_3dtiles.py ../data/building.shp ./buildings --color "#cccccc" --height-field HEIGHT --limit 50000 --dem ../data/sc_dem_tif.tif
 
+node dist/cli.js terrain-cesium data/sc_dem_tif.tif -o output/tiles --max-level 10
+node dist/cli.js 3dtiles data/building.shp -o output/buildings --color "#cccccc" --height-field HEIGHT --limit 200000 --dem data/sc_dem_tif.tif
+
 git add .
 git commit -m ""
 git push origin main

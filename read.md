@@ -1,6 +1,6 @@
 # gis-read
 
-当前版本：`1.1.0`
+当前版本：`1.1.1`
 
 中文 | [English](./README.md)
 

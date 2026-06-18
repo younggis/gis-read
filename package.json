@@ -1,6 +1,6 @@
 {
   "name": "gis-read",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "GIS data parser and converter CLI/library for Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV, ESRI JSON, MIF, GeoPackage, GML, FlatGeobuf, Cesium terrain tiles (terrain-RGB PNG, quantized-mesh, 3D Tiles b3dm) with multi-CRS support and streaming for large files",
   "type": "module",
   "main": "dist/index.js",
