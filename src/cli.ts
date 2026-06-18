@@ -22,6 +22,7 @@ import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as zlib from 'node:zlib';
 import { Command, Option } from 'commander';
 import {
   parseFile,
@@ -34,6 +35,8 @@ import {
   tileFile,
   writeTerrainTiles,
   writeQuantizedMeshTiles,
+  writeTerrainCesiumTiles,
+  writeThreeDTiles,
   importFileToDatabase,
   exportDatabaseTable,
   parseGeoJSONStream,
@@ -411,6 +414,124 @@ program
   });
 
 program
+  .command('terrain-cesium')
+  .description('Generate Cesium quantized-mesh-1.0 .terrain tiles from a DEM (GeoTIFF) file. Mirrors src/dem_to_terrain.py.')
+  .argument('<input>', 'input DEM file (.tif)')
+  .requiredOption('-o, --output <dir>', 'output XYZ tile directory (z/x/y.terrain + layer.json)')
+  .option('--max-level <n>', 'maximum tiling zoom level', (v) => Number(v), 8)
+  .option('--grid-size <n>', 'vertices per tile edge (16/32/64 typical)', (v) => Number(v), 32)
+  .option('--no-compress', 'skip gzip compression (debug only)')
+  .option('--from-crs <crs>', 'source CRS (auto-detected from GeoTIFF)')
+  .action(async (
+    input: string,
+    opts: { output: string; maxLevel: number; gridSize: number; noCompress?: boolean; fromCrs?: string },
+  ) => {
+    const done = log.startTimer('terrain-cesium');
+    const summary = await writeTerrainCesiumTiles(input, {
+      outputPath: opts.output,
+      maxLevel: opts.maxLevel,
+      gridSize: opts.gridSize,
+      noCompress: opts.noCompress,
+      fromCrs: opts.fromCrs,
+    });
+    done('Cesium quantized-mesh tiles generated', {
+      realTiles: summary.totalTiles,
+      blankTiles: summary.blankTiles,
+      maxLevel: summary.maxLevel,
+      demBounds: summary.demBounds,
+      output: summary.outputPath,
+    });
+  });
+
+program
+  .command('3dtiles')
+  .description('Generate Cesium 3D Tiles (b3dm white models) from a building Shapefile. Mirrors src/shp_to_3dtiles_dem.py.')
+  .argument('<input>', 'input Shapefile (.shp, companion .dbf loaded automatically)')
+  .requiredOption('-o, --output <dir>', 'output directory (tileset.json + Tiles/{z}/{x}/{y}.b3dm)')
+  .option('--lod <n>', 'Web Mercator tiling zoom level (0-22)', (v) => Number(v), 12)
+  .option('--limit <n>', 'only process the first N polygon records (debug)', (v) => Number(v))
+  .option('--color <hex>', 'building tint, #RGB / #RRGGBB / #RRGGBBAA', '#cccccc')
+  .option('--height-field <name>', 'DBF field with per-feature building height')
+  .option('--base-height-field <name>', 'DBF field with per-feature base height')
+  .option('--default-height <m>', 'fallback building height when --height-field is missing', (v) => Number(v), 10)
+  .option('--base-height <m>', 'fallback base height (ground offset when --dem is set)', (v) => Number(v), 0)
+  .option('--dem <file>', 'optional DEM file (.tif/.tiff/.asc) for ground elevation sampling')
+  .option('--dem-crs <crs>', 'DEM CRS override (defaults to EPSG:4326)', 'EPSG:4326')
+  .option('--dem-offset <m>', 'vertical offset added to sampled DEM height', (v) => Number(v), 0)
+  .option('--dem-default-height <m>', 'fallback ground elevation when DEM is missing / out of range', (v) => Number(v), 0)
+  .option('--dem-sample <mode>', 'vertices | centroid | minimum | average', 'vertices')
+  .option('--height-is-relative', 'treat the height field as a relative building height (top = base + height)')
+  .option('--height-absolute', 'treat the height field as an absolute top elevation (overrides the default when --dem is set)')
+  .option('--min-height <m>', 'clamp the relative building height to a minimum')
+  .option('--max-height <m>', 'clamp the relative building height to a maximum')
+  .option('--input-crs <crs>', 'source CRS for the SHP (defaults to EPSG:4326)', 'EPSG:4326')
+  .option('--outer-orientation <mode>', 'auto | cw | ccw | all (exterior-ring orientation hint)', 'auto')
+  .option('--root-geometric-error <n>', 'tileset root geometricError', (v) => Number(v), 500)
+  .option('--overwrite', 'clear the output directory before writing')
+  .option('--no-pretty-json', 'emit minified tileset.json')
+  .action(async (
+    input: string,
+    opts: {
+      output: string;
+      lod: number;
+      limit?: number;
+      color: string;
+      heightField?: string;
+      baseHeightField?: string;
+      defaultHeight: number;
+      baseHeight: number;
+      dem?: string;
+      demCrs: string;
+      demOffset: number;
+      demDefaultHeight: number;
+      demSample: 'vertices' | 'centroid' | 'minimum' | 'average';
+      heightIsRelative?: boolean;
+      heightAbsolute?: boolean;
+      minHeight?: number;
+      maxHeight?: number;
+      inputCrs: string;
+      outerOrientation: 'auto' | 'cw' | 'ccw' | 'all';
+      rootGeometricError: number;
+      overwrite?: boolean;
+      prettyJson: boolean;
+    },
+  ) => {
+    const done = log.startTimer('3dtiles');
+    const summary = await writeThreeDTiles(input, {
+      outputPath: opts.output,
+      lod: opts.lod,
+      limit: opts.limit,
+      color: opts.color,
+      heightField: opts.heightField,
+      baseHeightField: opts.baseHeightField,
+      defaultHeight: opts.defaultHeight,
+      baseHeight: opts.baseHeight,
+      dem: opts.dem,
+      demCrs: opts.demCrs,
+      demOffset: opts.demOffset,
+      demDefaultHeight: opts.demDefaultHeight,
+      demSample: opts.demSample,
+      heightIsRelative: opts.heightIsRelative,
+      heightAbsolute: opts.heightAbsolute,
+      minHeight: opts.minHeight,
+      maxHeight: opts.maxHeight,
+      inputCrs: opts.inputCrs,
+      outerOrientation: opts.outerOrientation,
+      rootGeometricError: opts.rootGeometricError,
+      overwrite: opts.overwrite,
+      prettyJson: opts.prettyJson,
+    });
+    done('3D Tiles generated', {
+      features: summary.features,
+      shapesRead: summary.shapesRead,
+      skipped: summary.skipped,
+      tiles: summary.tiles,
+      lod: summary.lod,
+      output: summary.outputPath,
+    });
+  });
+
+program
   .command('db-import')
   .description('Import a supported vector file into a PostgreSQL/PostGIS, SQL Server, or MongoDB collection.')
   .argument('<input>', 'input GIS file')
@@ -567,9 +688,18 @@ program
       '.xml': 'application/xml',
       '.kml': 'application/vnd.google-earth.kml+xml',
       '.gpx': 'application/gpx+xml',
+      '.terrain': 'application/vnd.quantized-mesh',
+      '.b3dm': 'application/octet-stream',
+      '.i3dm': 'application/octet-stream',
+      '.pnts': 'application/octet-stream',
+      '.cmpt': 'application/octet-stream',
       '.woff': 'font/woff',
       '.woff2': 'font/woff2',
     };
+
+    // Extensions that should be gzipped on the fly. Cesium's CesiumTerrainProvider
+    // and 3D Tiles tile loaders expect Content-Encoding: gzip for these formats.
+    const gzipExtensions = new Set(['.terrain', '.b3dm', '.i3dm', '.pnts', '.cmpt']);
 
     const server = http.createServer((req, res) => {
       // CORS headers
@@ -614,11 +744,32 @@ program
 
         const ext = path.extname(filePath).toLowerCase();
         const contentType = mimeTypes[ext] ?? 'application/octet-stream';
-        res.writeHead(200, {
-          'Content-Type': contentType,
-          'Content-Length': stat.size,
-        });
-        fs.createReadStream(filePath).pipe(res);
+        const shouldGzip = gzipExtensions.has(ext);
+        if (ext === '.terrain') {
+          // .terrain files are already gzipped on disk per Cesium quantized-mesh spec.
+          // Stream as-is and declare Content-Encoding: gzip.
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Content-Encoding': 'gzip',
+            'Vary': 'Accept-Encoding',
+            'Content-Length': stat.size,
+          });
+          fs.createReadStream(filePath).pipe(res);
+        } else if (shouldGzip) {
+          // 3D Tiles formats (.b3dm, .i3dm, .pnts, .cmpt) are typically NOT pre-gzipped.
+          // Serve them as uncompressed binary files with correct Content-Type.
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Content-Length': stat.size,
+          });
+          fs.createReadStream(filePath).pipe(res);
+        } else {
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Content-Length': stat.size,
+          });
+          fs.createReadStream(filePath).pipe(res);
+        }
       });
     });
 

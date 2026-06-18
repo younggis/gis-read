@@ -92,7 +92,17 @@ gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 gis terrain dem.tif -o terrain --max-zoom 12
 gis terrain dem.tif -o terrain --max-zoom 10 --encoding terrarium
 
+# Generate Cesium quantized-mesh-1.0 .terrain tiles from a DEM
+gis terrain-cesium dem.tif -o cesium-terrain --max-level 10 --grid-size 32
+
+# Generate Cesium 3D Tiles (b3dm white models) from a building Shapefile
+gis 3dtiles buildings.shp -o cesium-tiles --lod 12 --default-height 12
+gis 3dtiles buildings.shp -o cesium-tiles --lod 13 --default-height 10 \
+  --height-field HEIGHT --dem dem.tif --height-is-relative --overwrite
+
 # Serve static files (terrain, PBF tiles, etc.) with CORS
+# .terrain / .b3dm / .i3dm / .pnts / .cmpt files are auto-gzipped with
+# Content-Encoding: gzip, ready for CesiumTerrainProvider and the 3D Tiles loaders
 gis serve output/terrain
 gis serve output/tiles --port 3000
 
@@ -141,6 +151,8 @@ node dist/cli.js --help
 | GeoPackage | `.gpkg` | Yes | Yes | Multi-layer support; `--layer` selects a specific layer; without `--layer`, each layer exports to a separate file. Also reads SpatiaLite `.sqlite` files. |
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | No | Yes | Generated with `gis tile`; all input geometries are converted to WebMercator. |
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | No | Yes | Generated with `gis terrain`; reads DEM GeoTIFF, outputs Mapbox terrain-RGB encoded PNG tiles. |
+| Cesium quantized-mesh | `/{z}/{x}/{y}.terrain` + `layer.json` | No | Yes | Generated with `gis terrain-cesium`; reads DEM GeoTIFF and emits Cesium `quantized-mesh-1.0` tiles in the GeographicTilingScheme (TMS). |
+| Cesium 3D Tiles | `tileset.json` + `Tiles/{z}/{x}/{y}.b3dm` | No | Yes | Generated with `gis 3dtiles`; reads a building Shapefile (Polygon/PolygonZ/PolygonM) and emits b3dm white models. Optional DEM sampling produces ground-hugging buildings. |
 | FlatGeobuf | `.fgb` | Yes | Yes | Performant binary format based on FlatBuffers; supports spatial indexing and streaming. |
 | GML | `.gml` | Yes | Yes | OGC Geography Markup Language; supports GML 2/3 geometry types and feature collections. |
 | KMZ | `.kmz` | Yes | Yes | ZIP archive containing `doc.kml`; KML is extracted and parsed using the same KML handler. Writing repacks `doc.kml` into a ZIP. |

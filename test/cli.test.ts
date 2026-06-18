@@ -10,8 +10,9 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
+import * as zlib from 'node:zlib';
 
 import { parseGeoJSON } from '../src/parsers/geojson.js';
 import { parseKML } from '../src/parsers/kml.js';
@@ -413,3 +414,164 @@ test('detect command returns geopackage for .gpkg file', async () => {
   const { stdout } = await runCli(['detect', GPKG, '--log-level', 'silent']);
   assert.ok(stdout.trim().includes('geopackage'), `got: ${stdout}`);
 });
+
+test('serve command sets correct headers for .terrain and 3D Tiles', async () => {
+  const dir = tempDir();
+
+  // .terrain files are pre-gzipped on disk (Cesium spec)
+  const terrainOriginal = Buffer.alloc(200, 0xAB);
+  const terrainGzipped = zlib.gzipSync(terrainOriginal);
+  fs.writeFileSync(path.join(dir, 'tile.terrain'), terrainGzipped);
+
+  // .b3dm files are NOT pre-gzipped (they contain raw binary glTF)
+  const b3dmBody = Buffer.from([0x62, 0x33, 0x64, 0x6D, 0x01, 0x00, 0x00]); // "b3dm" magic + version
+  fs.writeFileSync(path.join(dir, 'tile.b3dm'), b3dmBody);
+
+  // Non-3D file should remain unchanged
+  const pbfBody = Buffer.from([0x1a, 0x02, 0x00, 0x00]);
+  fs.writeFileSync(path.join(dir, 'tile.pbf'), pbfBody);
+
+  const port = 18080 + Math.floor(Math.random() * 1000);
+  const child: ChildProcess = spawn(
+    process.execPath,
+    ['--import', 'tsx', SOURCE_CLI, 'serve', dir, '--port', String(port), '--log-level', 'silent'],
+    { cwd: path.resolve('.'), stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  child.stderr?.on('data', () => {});
+  const killChild = () => {
+    if (!child.killed) child.kill();
+  };
+  process.once('exit', killChild);
+
+  try {
+    await waitForPort(port, 5000);
+
+    // Test .terrain: should have Content-Encoding: gzip
+    const terrainRes = await fetch(`http://127.0.0.1:${port}/tile.terrain`);
+    assert.equal(terrainRes.status, 200);
+    assert.equal(terrainRes.headers.get('content-type'), 'application/vnd.quantized-mesh');
+    assert.equal(terrainRes.headers.get('content-encoding'), 'gzip');
+    // Fetch auto-decompresses, so we get original data
+    const terrainBody = await terrainRes.arrayBuffer();
+    assert.deepEqual(Buffer.from(terrainBody), terrainOriginal, '.terrain should decompress to original');
+
+    // Test .b3dm: should NOT have Content-Encoding: gzip
+    const b3dmRes = await fetch(`http://127.0.0.1:${port}/tile.b3dm`);
+    assert.equal(b3dmRes.status, 200);
+    assert.equal(b3dmRes.headers.get('content-type'), 'application/octet-stream');
+    assert.equal(b3dmRes.headers.get('content-encoding'), null, '.b3dm should NOT be gzipped');
+    const b3dmBody = await b3dmRes.arrayBuffer();
+    assert.deepEqual(Buffer.from(b3dmBody), b3dmBody, '.b3dm should be raw bytes');
+
+    // Test .pbf: should remain unchanged
+    const pbfRes = await fetch(`http://127.0.0.1:${port}/tile.pbf`);
+    assert.equal(pbfRes.status, 200);
+    assert.equal(pbfRes.headers.get('content-type'), 'application/x-protobuf');
+    assert.equal(pbfRes.headers.get('content-encoding'), null, '.pbf should not be gzipped');
+    assert.deepEqual(Buffer.from(await pbfRes.arrayBuffer()), pbfBody, '.pbf should be raw bytes');
+  } finally {
+    killChild();
+    process.removeListener('exit', killChild);
+  }
+});
+  const dir = tempDir();
+  // Cesium's CesiumTerrainProvider and 3D Tiles loaders expect Content-Encoding:
+  // gzip for .terrain / .b3dm / .i3dm / .pnts / .cmpt. The serve command gzips
+  // these on the fly and leaves everything else (e.g. .pbf) untouched.
+  const gzippedFixtures: Array<{ name: string; contentType: string; body: Buffer }> = [
+    { name: 'tile.terrain', contentType: 'application/vnd.quantized-mesh', body: Buffer.alloc(1024, 0xAB) },
+    { name: 'tile.b3dm', contentType: 'application/octet-stream', body: Buffer.alloc(1024, 0xCD) },
+    { name: 'tile.i3dm', contentType: 'application/octet-stream', body: Buffer.alloc(1024, 0xEF) },
+    { name: 'tile.pnts', contentType: 'application/octet-stream', body: Buffer.alloc(1024, 0x12) },
+    { name: 'tile.cmpt', contentType: 'application/octet-stream', body: Buffer.alloc(1024, 0x34) },
+  ];
+  for (const f of gzippedFixtures) {
+    const p = path.join(dir, f.name);
+    fs.writeFileSync(p, f.body);
+    const stat = fs.statSync(p);
+    console.log(`${f.name}: size=${stat.size}, isFile=${stat.isFile()}`);
+  }
+  const pbfBody = Buffer.from([0x1a, 0x02, 0x00, 0x00]);
+  fs.writeFileSync(path.join(dir, 'tile.pbf'), pbfBody);
+
+  const port = 18080 + Math.floor(Math.random() * 1000);
+  const child: ChildProcess = spawn(
+    process.execPath,
+    ['--import', 'tsx', SOURCE_CLI, 'serve', dir, '--port', String(port), '--log-level', 'silent'],
+    { cwd: path.resolve('.'), stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  // Suppress noisy server output; surface failures.
+  child.stdout?.on('data', () => {});
+  child.stderr?.on('data', (chunk: Buffer) => {
+    const msg = chunk.toString();
+    // Log all debug messages
+    if (msg.includes('[GZIP]') || msg.includes('[DEBUG]') || msg.includes('error') || msg.includes('Error')) {
+      console.error('[serve]', msg);
+    }
+  });
+  const killChild = () => {
+    if (!child.killed) child.kill();
+  };
+  process.once('exit', killChild);
+
+  try {
+    await waitForPort(port, 5000);
+
+    // First, verify a non-gzipped request works
+    const pbfRes = await fetch(`http://127.0.0.1:${port}/tile.pbf`);
+    assert.equal(pbfRes.status, 200, '.pbf should return 200');
+    assert.equal(pbfRes.headers.get('content-type'), 'application/x-protobuf', '.pbf content-type');
+    assert.equal(pbfRes.headers.get('content-encoding'), null, '.pbf should not be gzipped');
+    assert.equal(pbfRes.headers.get('vary'), null, '.pbf should not advertise Vary');
+    assert.deepEqual(Buffer.from(await pbfRes.arrayBuffer()), pbfBody, '.pbf body should be raw bytes');
+
+    // Now test all gzipped formats
+    // Since these files are already gzipped on disk, we serve them as-is with
+    // Content-Encoding: gzip. The test fixtures need to be pre-gzipped.
+    const gzippedFixtureFiles: Array<{ name: string; contentType: string; originalBody: Buffer }> = [
+      { name: 'tile.terrain', contentType: 'application/vnd.quantized-mesh', originalBody: Buffer.alloc(200, 0xAB) },
+      { name: 'tile.b3dm', contentType: 'application/octet-stream', originalBody: Buffer.alloc(150, 0xCD) },
+      { name: 'tile.i3dm', contentType: 'application/octet-stream', originalBody: Buffer.alloc(180, 0xEF) },
+      { name: 'tile.pnts', contentType: 'application/octet-stream', originalBody: Buffer.alloc(160, 0x12) },
+      { name: 'tile.cmpt', contentType: 'application/octet-stream', originalBody: Buffer.alloc(140, 0x34) },
+    ];
+
+    // Create pre-gzipped files (simulating real .terrain/.b3dm files on disk)
+    for (const f of gzippedFixtureFiles) {
+      const p = path.join(dir, f.name);
+      const gzipped = zlib.gzipSync(f.originalBody);
+      fs.writeFileSync(p, gzipped);
+    }
+
+    for (const f of gzippedFixtureFiles) {
+      const res = await fetch(`http://127.0.0.1:${port}/${f.name}`);
+      assert.equal(res.status, 200, `${f.name} should return 200`);
+      assert.equal(res.headers.get('content-type'), f.contentType, `${f.name} content-type`);
+      assert.equal(res.headers.get('content-encoding'), 'gzip', `${f.name} content-encoding`);
+      assert.equal(res.headers.get('vary'), 'Accept-Encoding', `${f.name} vary header`);
+      assert.ok(res.headers.get('content-length'), `${f.name} should have Content-Length equal to gzipped file size`);
+
+      // Fetch auto-decompresses, so we get the original data back
+      const body = await res.arrayBuffer();
+      assert.deepEqual(Buffer.from(body), f.originalBody, `${f.name} should decompress to original`);
+    }
+  } finally {
+    killChild();
+    process.removeListener('exit', killChild);
+  }
+});
+
+async function waitForPort(port: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/__not_a_real_file`, { method: 'HEAD' });
+      // Any response (including 404) means the server is up.
+      void res;
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  throw new Error(`serve did not start on port ${port} within ${timeoutMs}ms`);
+}

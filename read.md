@@ -94,7 +94,16 @@ gis tile input.geojson -o tiles --from-crs WGS84 --threads 4 --layer buildings
 gis terrain dem.tif -o terrain --max-zoom 12
 gis terrain dem.tif -o terrain --max-zoom 10 --encoding terrarium
 
+# 从 DEM 生成 Cesium quantized-mesh-1.0 .terrain 切片
+gis terrain-cesium dem.tif -o cesium-terrain --max-level 10 --grid-size 32
+
+# 从建筑 Shapefile 生成 Cesium 3D Tiles（b3dm 白模）
+gis 3dtiles buildings.shp -o cesium-tiles --lod 12 --default-height 12
+gis 3dtiles buildings.shp -o cesium-tiles --lod 13 --default-height 10 \
+  --height-field HEIGHT --dem dem.tif --height-is-relative --overwrite
+
 # 启动静态文件服务（地形、PBF 切片等），支持跨域
+# .terrain / .b3dm / .i3dm / .pnts / .cmpt 文件会自动 gzip 压缩并声明 Content-Encoding: gzip，可直接对接 Cesium
 gis serve output/tiles
 gis serve output/terrain --port 3000
 
@@ -143,6 +152,8 @@ node dist/cli.js --help
 | GeoPackage | `.gpkg` | 是 | 是 | 支持多图层；使用 `--layer` 选择指定图层，不指定时每个图层自动导出为单独文件。也支持读取 SpatiaLite `.sqlite` 文件。 |
 | MVT/PBF tiles | `/{z}/{x}/{y}.pbf` | 否 | 是 | 通过 `gis tile` 生成，输入几何会统一转为 WebMercator。 |
 | Terrain-RGB tiles | `/{z}/{x}/{y}.png` | 否 | 是 | 通过 `gis terrain` 生成，读取 DEM GeoTIFF，输出 Mapbox terrain-RGB 编码的 PNG 切片。 |
+| Cesium quantized-mesh | `/{z}/{x}/{y}.terrain` + `layer.json` | 否 | 是 | 通过 `gis terrain-cesium` 生成，读取 DEM GeoTIFF，输出 Cesium `quantized-mesh-1.0` 切片（GeographicTilingScheme / TMS）。 |
+| Cesium 3D Tiles | `tileset.json` + `Tiles/{z}/{x}/{y}.b3dm` | 否 | 是 | 通过 `gis 3dtiles` 生成，读取建筑 Shapefile（Polygon/PolygonZ/PolygonM），输出 b3dm 白模；可指定 DEM 让建筑底面贴合地形。 |
 | FlatGeobuf | `.fgb` | 是 | 是 | 基于 FlatBuffers 的高性能二进制格式，支持空间索引和流式读取。 |
 | GML | `.gml` | 是 | 是 | OGC 地理标记语言；支持 GML 2/3 几何类型和要素集合。 |
 | KMZ | `.kmz` | 是 | 是 | ZIP 包含 `doc.kml`；KML 被提取并复用 KML 解析器处理。写出时重新打包 `doc.kml` 到 ZIP。 |

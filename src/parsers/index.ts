@@ -128,6 +128,10 @@ export { writeTerrainTiles } from './terrain-tile.js';
 export type { TerrainTileOptions, TerrainTileSummary, TerrainEncoding } from './terrain-tile.js';
 export { writeQuantizedMeshTiles } from './quantized-mesh.js';
 export type { QuantizedMeshOptions, QuantizedMeshSummary } from './quantized-mesh.js';
+export { writeTerrainCesiumTiles, tileBBox as cesiumTileBBox, llhToEcef } from './terrain-cesium.js';
+export type { TerrainCesiumOptions, TerrainCesiumSummary } from './terrain-cesium.js';
+export { writeThreeDTiles, geodeticToEcef as wgs84ToEcef } from './three-d-tiles.js';
+export type { ThreeDTilesOptions, ThreeDTilesSummary } from './three-d-tiles.js';
 
 export { detectFormat } from '../format-detect.js';
 export { parseGeoJSON, parseGeoJSONAuto, parseGeoJSONStream, writeGeoJSON, convertGeoJSON } from './geojson.js';

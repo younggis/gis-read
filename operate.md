@@ -24,6 +24,17 @@ node dist/cli.js convert data/lakes.shp -o output/lakes.fg
 
 node dist/cli.js serve output/terrain --port 9095  # 指定端口
 
+python dem_to_terrain.py ../data/sc_dem_tif.tif ./tiles --max-level 10
+python shp_to_3dtiles.py ../data/building.shp ./buildings --color "#cccccc" --height-field HEIGHT --limit 50000
+
+python output/serve_terrain.py output/tiles --port 8080
+node dist/cli.js serve output/tiles --port 8080
+
+node dist/cli.js serve output/buildings --port 8080
+python output/serve_terrain.py output/buildings --port 8080
+
+python shp_to_3dtiles.py ../data/building.shp ./buildings --color "#cccccc" --height-field HEIGHT --limit 50000 --dem ../data/sc_dem_tif.tif
+
 git add .
 git commit -m ""
 git push origin main

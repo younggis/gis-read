@@ -1,7 +1,7 @@
 {
   "name": "gis-read",
   "version": "1.1.0",
-  "description": "GIS data parser and converter CLI/library for Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV, ESRI JSON, MIF, GeoPackage, GML, and FlatGeobuf with multi-CRS support and streaming for large files",
+  "description": "GIS data parser and converter CLI/library for Shapefile, MapInfo TAB, GeoJSON, KML, GPX, TopoJSON, CZML, CSV, ESRI JSON, MIF, GeoPackage, GML, FlatGeobuf, Cesium terrain tiles (terrain-RGB PNG, quantized-mesh, 3D Tiles b3dm) with multi-CRS support and streaming for large files",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -58,12 +58,12 @@
     "flatgeobuf": "^4.4.0",
     "geotiff": "^3.0.5",
     "mongodb": "^6.21.0",
-    "mssql": "^11.0.1",
+    "mssql": "^1.1.1.1",
     "pg": "^8.13.1",
     "pngjs": "^7.0.0",
     "proj4": "^2.20.8",
     "shpjs": "^6.2.0",
-    "sql.js": "^1.11.0",
+    "sql.js": "^1.1.1.1",
     "stream-json": "^3.3.0"
   },
   "devDependencies": {
