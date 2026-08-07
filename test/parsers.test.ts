@@ -931,8 +931,10 @@ test('writeTAB handles MultiLineString and MultiPolygon', () => {
   writeTAB(result, { outputPath: out });
   const re = parseTAB(out);
   assert.equal(re.features.length, 2);
-  // MultiLineString is written as a single merged polyline, so it may be read back as LineString
-  assert.ok(re.features[0].geometry?.type === 'MultiLineString' || re.features[0].geometry?.type === 'LineString');
+  assert.equal(re.features[0].geometry?.type, 'MultiLineString');
+  const lineParts = (re.features[0].geometry as any).coordinates;
+  assert.deepEqual(lineParts.map((part: number[][]) => part.length), [2, 2]);
+  assertBBoxClose(geometryBBox(re.features[0].geometry)!, [116.39, 39.90, 116.42, 39.93]);
   assert.ok(re.features[1].geometry?.type === 'MultiPolygon' || re.features[1].geometry?.type === 'Polygon');
 });
 

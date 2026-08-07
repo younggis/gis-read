@@ -191,7 +191,7 @@ async function readPostgresRows(connection: string, tableName: string, requested
     );
     const columns = columnRows.rows
       .map((row: { column_name: string }) => row.column_name)
-      .filter((name: string) => name !== 'id' && name.toLowerCase() !== geomColumn.toLowerCase());
+      .filter((name: string) => name.toLowerCase() !== geomColumn.toLowerCase());
     const rows = await client.query(buildPostgresSelectSQL(table, columns, geomColumn, where));
     return { rows: rows.rows, geomColumn };
   } finally {
@@ -241,7 +241,7 @@ async function readSqlServerRows(connection: string, tableName: string, requeste
     );
     const columns = columnsResult.recordset
       .map((row: { COLUMN_NAME: string }) => row.COLUMN_NAME)
-      .filter((name: string) => name !== 'id' && name.toLowerCase() !== geomColumn.toLowerCase());
+      .filter((name: string) => name.toLowerCase() !== geomColumn.toLowerCase());
     const result = await pool.request().query(buildSqlServerSelectSQL(table, columns, geomColumn, where));
     return { rows: result.recordset, geomColumn };
   } finally {

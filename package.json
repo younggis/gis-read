@@ -58,12 +58,12 @@
     "flatgeobuf": "^4.4.0",
     "geotiff": "^3.0.5",
     "mongodb": "^6.21.0",
-    "mssql": "^1.1.1.1",
+    "mssql": "^11.0.0",
     "pg": "^8.13.1",
     "pngjs": "^7.0.0",
     "proj4": "^2.20.8",
     "shpjs": "^6.2.0",
-    "sql.js": "^1.1.1.1",
+    "sql.js": "^1.11.0",
     "stream-json": "^3.3.0"
   },
   "devDependencies": {

@@ -57,7 +57,18 @@ export function writeTAB(result: ParseResult, opts: TabWriteOptions = {}): void 
 
   for (const f of features) {
     const geom = f.geometry!;
-    if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+    if (geom.type === 'LineString' || geom.type === 'MultiLineString') {
+      const parts = geom.type === 'LineString'
+        ? [geom.coordinates as number[][]]
+        : geom.coordinates as number[][][];
+      const line = buildLinePayload(parts, transform);
+      mapObjects.push({
+        header: line.header,
+        coordPayload: line.payload,
+        numSections: line.numSections,
+        coordDataSize: line.payload.length,
+      });
+    } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
       const polygons = geom.type === 'Polygon'
         ? mergeDegenerateRings(geom.coordinates as number[][][])
         : (geom.coordinates as number[][][][]).flatMap(p => mergeDegenerateRings(p));
@@ -214,7 +225,8 @@ export function writeTAB(result: ParseResult, opts: TabWriteOptions = {}): void 
     let maxOff = blockStart + 8 + 12; // after block header + index header
     for (const off of idOffsets) {
       if (off >= blockStart + 8 + 12 && off < blockStart + blockSize) {
-        maxOff = Math.max(maxOff, off + 27); // header size = 27
+        const objectIndex = idOffsets.indexOf(off);
+        maxOff = Math.max(maxOff, off + mapObjects[objectIndex].header.length);
       }
     }
     const dataLen = Math.min(maxOff - (blockStart + 8), blockSize - 8 - 12);
@@ -295,7 +307,6 @@ function coordToInt(t: MapTransform, x: number, y: number): [number, number] {
 // ---------------------------------------------------------------------------
 
 const OBJ_POINT = 1;
-const OBJ_LINE = 0x08;
 const OBJ_LINE_EX = 0x26;
 const OBJ_REGION_COMPRESSED = 0x0d;
 const OBJ_MULTIPOINT = 5;
@@ -356,10 +367,6 @@ function serializeGeometryLegacy(geometry: Geometry, transform: MapTransform, fi
       return serializePointLegacy(geometry.coordinates as number[], transform);
     case 'MultiPoint':
       return serializeMultiPointLegacy(geometry.coordinates as number[][], transform);
-    case 'LineString':
-      return serializeLineLegacy([geometry.coordinates as number[][]], transform);
-    case 'MultiLineString':
-      return serializeLineLegacy(geometry.coordinates as number[][][], transform);
     default:
       return serializePointLegacy([0, 0], transform);
   }
@@ -394,43 +401,74 @@ function serializePointLegacy(coords: number[], _t: MapTransform): Buffer {
  *
  * Let's use the coordinate block approach for lines too.
  */
-function serializeLineLegacy(parts: number[][][], t: MapTransform): Buffer {
-  // For simplicity, merge all parts and write as a single polyline.
-  // Use the coordinate block approach (similar to region but simpler).
-  const allPoints = parts.flat();
-  if (allPoints.length === 0) {
-    return serializePointLegacy([0, 0], t);
+interface LinePayload {
+  header: Buffer;
+  payload: Buffer;
+  numSections: number;
+}
+
+/** Build a standard v500 uncompressed polyline (object type 0x26). */
+function buildLinePayload(inputParts: number[][][], t: MapTransform): LinePayload {
+  const parts = inputParts
+    .map((part) => part.filter((point) =>
+      point.length >= 2 && Number.isFinite(point[0]) && Number.isFinite(point[1])))
+    .filter((part) => part.length >= 2);
+  if (parts.length === 0) {
+    throw new Error('MapInfo TAB polyline requires at least one part with two coordinates.');
+  }
+  if (parts.length > 0xffff) {
+    throw new Error(`MapInfo TAB polyline has too many parts: ${parts.length}.`);
   }
 
-  // Write as a legacy polyline with coordinate block.
-  // Type 0x08 supports only 3 points. For more points, use coordinate block.
-  // We'll use the region-style coordinate block for lines.
-  // GDAL writes polylines with coordinate blocks using type 0x08/0x26.
-  //
-  // Actually, the simplest approach that works: write a minimal legacy line
-  // object that our parser can read. The legacy line (0x08) stores 3 fixed
-  // coordinate pairs. For lines with more points, we need the coordinate
-  // block approach.
-  //
-  // For now, write as a fixed 38-byte legacy line with the first 3 points.
-  // This is lossy for >3 points but compatible.
-  const pts = allPoints.slice(0, 3);
-  while (pts.length < 3) pts.push(pts[pts.length - 1]);
+  const intParts = parts.map((part) => part.map(([x, y]) => coordToInt(t, x, y)));
+  const allPoints = intParts.flat();
+  const header = Buffer.alloc(40);
+  const sectionHeadersSize = intParts.length * 24;
+  const payload = Buffer.alloc(sectionHeadersSize + allPoints.length * 8);
 
-  const buf = Buffer.alloc(38);
-  buf[0] = OBJ_LINE; // type 0x08
-  // Bytes 1-4: reserved
-  buf.writeInt32LE(1, 1); // numSections = 1 (for simple line)
+  header[0] = OBJ_LINE_EX;
+  header.writeUInt32LE(payload.length, 9);
+  header.writeUInt16LE(intParts.length, 13);
+  header.writeInt32LE(allPoints[0][0], 15);
+  header.writeInt32LE(allPoints[0][1], 19);
+  writeIntBounds(header, 23, computeIntBounds(allPoints));
+  header[39] = 1;
 
-  // 3 coordinate pairs as int32 / 1000000, X negated
-  const factor = 1000000;
-  for (let i = 0; i < 3; i++) {
-    const [ix, iy] = coordToInt(t, pts[i][0], pts[i][1]);
-    buf.writeInt32LE(-ix, 5 + i * 8);
-    buf.writeInt32LE(iy, 5 + i * 8 + 4);
+  let sectionOffset = 0;
+  let coordinateOffset = sectionHeadersSize;
+  for (const part of intParts) {
+    payload.writeUInt32LE(part.length, sectionOffset);
+    writeIntBounds(payload, sectionOffset + 4, computeIntBounds(part));
+    payload.writeUInt32LE(coordinateOffset, sectionOffset + 20);
+    for (const [x, y] of part) {
+      payload.writeInt32LE(x, coordinateOffset);
+      payload.writeInt32LE(y, coordinateOffset + 4);
+      coordinateOffset += 8;
+    }
+    sectionOffset += 24;
   }
 
-  return buf;
+  return { header, payload, numSections: intParts.length };
+}
+
+function computeIntBounds(points: number[][]): [number, number, number, number] {
+  let minX = points[0][0];
+  let minY = points[0][1];
+  let maxX = minX;
+  let maxY = minY;
+  for (let i = 1; i < points.length; i++) {
+    minX = Math.min(minX, points[i][0]);
+    minY = Math.min(minY, points[i][1]);
+    maxX = Math.max(maxX, points[i][0]);
+    maxY = Math.max(maxY, points[i][1]);
+  }
+  return [minX, minY, maxX, maxY];
+}
+
+function writeIntBounds(buf: Buffer, offset: number, bounds: [number, number, number, number]): void {
+  for (let i = 0; i < bounds.length; i++) {
+    buf.writeInt32LE(bounds[i], offset + i * 4);
+  }
 }
 
 /**

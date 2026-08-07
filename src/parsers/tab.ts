@@ -520,8 +520,11 @@ function parseMapObject(type: number, buf: Buffer, off: number, end = buf.length
       return parseMultiPoint(buf, off);
     }
     const legacyType = type & 0xff;
-    if (legacyType === 0x08 || legacyType === 0x26) {
+    if (legacyType === 0x08) {
       return parseLegacyLineObject(buf, off, end);
+    }
+    if (legacyType === 0x26) {
+      return parseV500UncompressedPolyline(buf, off, transform) ?? parseLegacyLineObject(buf, off, end);
     }
     if (legacyType === 0x25) {
       return parseV500PointTableLine(buf, off, transform) ?? parseLegacyPointTableLine(buf, off, end);
@@ -632,6 +635,50 @@ function parseV500PointTableLine(buf: Buffer, off: number, transform: MapTransfo
     p += 4;
   }
   return { type: 'LineString', coordinates: coords };
+}
+
+function parseV500UncompressedPolyline(buf: Buffer, off: number, transform: MapTransform | null): Geometry | null {
+  if (!transform || transform.version < 500 || buf[off] !== 0x26 || off + 40 > buf.length) return null;
+
+  const coordBlockPtr = buf.readUInt32LE(off + 5);
+  const objectLen = buf.readUInt32LE(off + 9);
+  const numSections = buf.readUInt16LE(off + 13);
+  if (
+    coordBlockPtr <= 0 ||
+    coordBlockPtr >= buf.length ||
+    numSections === 0 ||
+    objectLen < numSections * 24
+  ) {
+    return null;
+  }
+
+  const cursor = new CoordBlockCursor(buf, coordBlockPtr, transform.blockSize);
+  const pointCounts: number[] = [];
+  let totalPoints = 0;
+  for (let section = 0; section < numSections; section++) {
+    const count = cursor.readInt32();
+    if (count < 2 || count > 1_000_000) return null;
+    pointCounts.push(count);
+    totalPoints += count;
+    if (totalPoints > 1_000_000) return null;
+    for (let i = 0; i < 5; i++) cursor.readInt32();
+  }
+  if (objectLen !== numSections * 24 + totalPoints * 8) return null;
+
+  const lines: number[][][] = [];
+  for (const count of pointCounts) {
+    const coordinates: number[][] = [];
+    for (let i = 0; i < count; i++) {
+      const coord = mapIntToCoord(transform, cursor.readInt32(), cursor.readInt32());
+      if (!isPlausibleLonLat(coord[0], coord[1])) return null;
+      coordinates.push(coord);
+    }
+    lines.push(coordinates);
+  }
+
+  return lines.length === 1
+    ? { type: 'LineString', coordinates: lines[0] }
+    : { type: 'MultiLineString', coordinates: lines };
 }
 
 function parseLegacyRegionObject(buf: Buffer, off: number, end: number, transform: MapTransform | null = null): Geometry | null {
